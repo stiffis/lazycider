@@ -161,6 +161,7 @@ func (m Model) renderRightPanel(width, panelHeight, coverHeight, queueHeight int
 				"Quick Actions",
 				"Ctrl+s: Search songs",
 				"Center search: h/l fold",
+				"Ctrl+l: open detail pane",
 				"Enter: Play selected",
 				"Space: Play / Pause",
 				"n/p: Next / Previous",
@@ -326,6 +327,11 @@ func (m Model) renderCenterPanel(width, height int) string {
 		return player
 	}
 
+	if m.searchActive {
+		inner := m.renderCenterSearchSplit(width, height, innerHeight)
+		return lipgloss.JoinVertical(lipgloss.Left, player, inner)
+	}
+
 	listRows := centerVisibleItems(height)
 	if listRows < 1 {
 		listRows = 1
@@ -401,6 +407,130 @@ func (m Model) renderCenterPanel(width, height int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, player, inner)
 }
 
+func (m Model) renderCenterSearchSplit(width, centerHeight, innerHeight int) string {
+	topHeight, bottomHeight := centerSearchPaneHeights(innerHeight)
+	if topHeight < 1 {
+		topHeight = innerHeight
+	}
+	if bottomHeight < 0 {
+		bottomHeight = 0
+	}
+
+	listRows := topHeight - 2
+	if listRows < 1 {
+		listRows = 1
+	}
+
+	topLines := make([]string, 0, topHeight)
+	title := fitDisplayWidth(m.centerTitle, width)
+	topLines = append(topLines, lipgloss.NewStyle().Foreground(gruvFg).Bold(true).Render(title))
+	header := formatCenterColumns("#", "Title", "Artist", "Duration", width)
+	topLines = append(topLines, lipgloss.NewStyle().Foreground(gruvFg).Bold(true).Render(header))
+
+	visibleSongs := m.centerSongs
+	if m.centerTop < len(m.centerSongs) {
+		visibleSongs = m.centerSongs[m.centerTop:]
+	} else {
+		visibleSongs = nil
+	}
+	if len(visibleSongs) > listRows {
+		visibleSongs = visibleSongs[:listRows]
+	}
+
+	for i := 0; i < len(visibleSongs); i++ {
+		s := visibleSongs[i]
+		isModuleRow := s.IsModule
+		dur := strings.TrimSpace(s.Duration)
+		if dur == "" {
+			dur = "--:--"
+		}
+		abs := m.centerTop + i
+		idx := strconv.Itoa(abs + 1)
+		if isModuleRow {
+			idx = ""
+			dur = ""
+		}
+		playingRow := false
+		if strings.TrimSpace(s.ID) != "" && strings.TrimSpace(s.ID) == strings.TrimSpace(m.trackID) {
+			idx = "▶"
+			playingRow = true
+		}
+		line := formatCenterColumns(idx, s.Title, s.Artist, dur, width)
+		if playingRow {
+			markerCell := padLeftDisplay("▶", 3)
+			coloredCell := strings.Replace(markerCell, "▶", lipgloss.NewStyle().Foreground(gruvGreen).Bold(true).Render("▶"), 1)
+			line = strings.Replace(line, markerCell, coloredCell, 1)
+		}
+		if m.focus == PanelCenter && abs == m.centerSelected {
+			hl := lipgloss.NewStyle().
+				Foreground(gruvBg).
+				Background(gruvYellow).
+				Bold(true).
+				Width(width)
+			line = hl.Render(line)
+		} else {
+			if isModuleRow {
+				line = lipgloss.NewStyle().Foreground(gruvFg).Bold(true).Render(line)
+			} else {
+				line = lipgloss.NewStyle().Foreground(gruvGray).Render(line)
+			}
+		}
+		topLines = append(topLines, line)
+	}
+	for len(topLines) < topHeight {
+		topLines = append(topLines, strings.Repeat(" ", width))
+	}
+	topStyle := lipgloss.NewStyle().
+		Foreground(gruvGray).
+		Background(gruvBg).
+		Width(width).
+		Height(topHeight)
+	top := topStyle.Render(strings.Join(topLines, "\n"))
+
+	if bottomHeight <= 0 {
+		return top
+	}
+
+	visibleDetail := bottomHeight - 2
+	if visibleDetail < 1 {
+		visibleDetail = 1
+	}
+	maxTop := len(m.searchDetailLines) - visibleDetail
+	if maxTop < 0 {
+		maxTop = 0
+	}
+	detailTop := m.searchDetailTop
+	if detailTop < 0 {
+		detailTop = 0
+	}
+	if detailTop > maxTop {
+		detailTop = maxTop
+	}
+
+	bottomLines := make([]string, 0, bottomHeight)
+	headerLine := "Detail"
+	t := strings.TrimSpace(m.searchDetailTitle)
+	if t != "" {
+		headerLine = "Detail · " + t
+	}
+	bottomLines = append(bottomLines, fitDisplayWidth(headerLine, width))
+	bottomLines = append(bottomLines, fitDisplayWidth("", width))
+	for i := detailTop; i < len(m.searchDetailLines) && len(bottomLines) < bottomHeight; i++ {
+		bottomLines = append(bottomLines, fitDisplayWidth(m.searchDetailLines[i], width))
+	}
+	for len(bottomLines) < bottomHeight {
+		bottomLines = append(bottomLines, strings.Repeat(" ", width))
+	}
+	bottomStyle := lipgloss.NewStyle().
+		Foreground(gruvGray).
+		Background(gruvBg).
+		Width(width).
+		Height(bottomHeight)
+	bottom := bottomStyle.Render(strings.Join(bottomLines, "\n"))
+
+	return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+}
+
 func formatCenterColumns(num, title, artist, duration string, width int) string {
 	if width <= 0 {
 		return ""
@@ -459,6 +589,11 @@ func (m Model) renderLeftPanel(width, height int) string {
 	if barWidth > width {
 		barWidth = width
 	}
+	maxLeft := barWidth - lipgloss.Width(rightIcon) - 3
+	if maxLeft < 1 {
+		maxLeft = 1
+	}
+	leftText = truncateDisplay(leftText, maxLeft)
 
 	gap := barWidth - lipgloss.Width(leftText) - lipgloss.Width(rightIcon) - 2
 	if gap < 1 {
@@ -583,7 +718,7 @@ func (m Model) renderFocusBar(l layoutInfo) string {
 
 	divider := lipgloss.NewStyle().Background(gruvBg).Width(1).Render(" ")
 	left := seg(l.leftWidth, m.focus == PanelLeft)
-	center := seg(l.centerWidth, m.focus == PanelCenter)
+	center := seg(l.centerWidth, m.focus == PanelCenter || m.focus == PanelCenterDetail)
 	right := seg(l.rightWidth, m.focus == PanelRight)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, divider, center, divider, right)

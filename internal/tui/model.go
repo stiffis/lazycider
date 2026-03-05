@@ -37,6 +37,7 @@ type centerSongRow struct {
 	IsModule bool
 	Section  int
 	Item     int
+	Kind     string
 }
 
 type searchSection struct {
@@ -60,6 +61,7 @@ const (
 const (
 	PanelLeft PanelFocus = iota
 	PanelCenter
+	PanelCenterDetail
 	PanelRight
 )
 
@@ -84,6 +86,9 @@ type Model struct {
 	searchQuery           string
 	searchSections        []searchSection
 	searchPrevFocus       PanelFocus
+	searchDetailTitle     string
+	searchDetailLines     []string
+	searchDetailTop       int
 
 	playlistIDByName   map[string]string
 	playlistURLByName  map[string]string
@@ -148,6 +153,9 @@ func NewModelWithClient(client *cider.Client) Model {
 		searchQuery:           "",
 		searchSections:        nil,
 		searchPrevFocus:       PanelCenter,
+		searchDetailTitle:     "Detail",
+		searchDetailLines:     []string{"Select a result and press Enter"},
+		searchDetailTop:       0,
 		playlistIDByName:      make(map[string]string),
 		playlistURLByName:     make(map[string]string),
 		playlistCache:         make(map[string][]centerSongRow),
@@ -189,6 +197,8 @@ func (m Model) focusLabel() string {
 		return "left"
 	case PanelCenter:
 		return "center"
+	case PanelCenterDetail:
+		return "detail"
 	case PanelRight:
 		return "right"
 	default:
@@ -526,6 +536,12 @@ func (m *Model) clearSearchContext() {
 	m.searchActive = false
 	m.searchQuery = ""
 	m.searchSections = nil
+	m.searchDetailTitle = "Detail"
+	m.searchDetailLines = []string{"Select a result and press Enter"}
+	m.searchDetailTop = 0
+	if m.focus == PanelCenterDetail {
+		m.focus = PanelCenter
+	}
 }
 
 func (m *Model) rebuildCenterFromSearch() {
@@ -545,13 +561,100 @@ func (m *Model) rebuildCenterFromSearch() {
 			row.IsModule = false
 			row.Section = si
 			row.Item = i
+			if strings.TrimSpace(row.Kind) == "" {
+				row.Kind = "songs"
+			}
 			rows = append(rows, row)
 		}
 	}
 	if len(rows) == 0 {
-		rows = []centerSongRow{{Title: "Songs (0)", IsModule: true, Section: 0, Item: -1}}
+		rows = []centerSongRow{{Title: "Songs (0)", IsModule: true, Section: 0, Item: -1, Kind: "songs"}}
 	}
 	m.centerSongs = rows
+}
+
+func (m Model) selectedCenterSearchRow() (centerSongRow, bool) {
+	if len(m.centerSongs) == 0 || m.centerSelected < 0 || m.centerSelected >= len(m.centerSongs) {
+		return centerSongRow{}, false
+	}
+	return m.centerSongs[m.centerSelected], true
+}
+
+func (m *Model) setSearchDetail(title string, lines []string) {
+	t := strings.TrimSpace(title)
+	if t == "" {
+		t = "Detail"
+	}
+	if len(lines) == 0 {
+		lines = []string{"No details available"}
+	}
+	m.searchDetailTitle = t
+	m.searchDetailLines = append([]string(nil), lines...)
+	m.searchDetailTop = 0
+}
+
+func (m *Model) ensureSearchDetailViewport(visible int) {
+	if visible < 1 {
+		visible = 1
+	}
+	total := len(m.searchDetailLines)
+	if total < 0 {
+		total = 0
+	}
+	maxTop := total - visible
+	if maxTop < 0 {
+		maxTop = 0
+	}
+	if m.searchDetailTop < 0 {
+		m.searchDetailTop = 0
+	}
+	if m.searchDetailTop > maxTop {
+		m.searchDetailTop = maxTop
+	}
+}
+
+func (m *Model) moveSearchDetail(delta, visible int) {
+	if delta == 0 {
+		m.ensureSearchDetailViewport(visible)
+		return
+	}
+	m.searchDetailTop += delta
+	m.ensureSearchDetailViewport(visible)
+}
+
+func centerSearchPaneHeights(innerHeight int) (int, int) {
+	if innerHeight <= 0 {
+		return 0, 0
+	}
+	top := (innerHeight * 55) / 100
+	if top < 6 {
+		top = 6
+	}
+	if innerHeight-top < 6 {
+		top = innerHeight - 6
+	}
+	if top < 1 {
+		top = innerHeight
+	}
+	bottom := innerHeight - top
+	if bottom < 0 {
+		bottom = 0
+	}
+	return top, bottom
+}
+
+func searchDetailVisibleItems(centerHeight int) int {
+	player := centerPlayerHeight(centerHeight)
+	inner := centerHeight - player
+	if inner < 1 {
+		return 1
+	}
+	_, bottom := centerSearchPaneHeights(inner)
+	v := bottom - 2
+	if v < 1 {
+		v = 1
+	}
+	return v
 }
 
 func (m Model) selectedCenterSection() (int, bool) {

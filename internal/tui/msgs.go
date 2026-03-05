@@ -86,7 +86,15 @@ type appStateLoadedMsg struct {
 }
 
 type searchSongsLoadedMsg struct {
-	query string
-	songs []centerSongRow
+	query    string
+	sections []searchSection
+	err      error
+}
+
+type searchDetailLoadedMsg struct {
+	kind  string
+	id    string
+	title string
+	lines []string
 	err   error
 }

@@ -32,6 +32,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ensureLyricsViewport(lyricsVisibleItems(l.rightQueueHeight), len(lyricsLines))
 		m.ensureLeftViewport(leftVisibleItems(l.panelHeight))
 		m.ensureCenterViewport(centerVisibleItems(l.panelHeight))
+		m.ensureSearchDetailViewport(searchDetailVisibleItems(l.panelHeight))
 		return m, m.drawCoverCmd(true)
 
 	case coverTickMsg:
@@ -87,21 +88,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.searchActive = true
 			m.searchQuery = strings.TrimSpace(msg.query)
-			m.searchSections = []searchSection{{Title: "Songs (0)", Expanded: true, Songs: nil}}
+			m.searchSections = []searchSection{{Title: "Songs (0)", Expanded: true, Songs: nil}, {Title: "Artists (0)", Expanded: true, Songs: nil}, {Title: "Albums (0)", Expanded: true, Songs: nil}, {Title: "Playlists (0)", Expanded: true, Songs: nil}}
 			m.rebuildCenterFromSearch()
+			m.setSearchDetail("Detail", []string{"Search failed", msg.err.Error()})
 			m.centerTitle = "Search · " + msg.query
-			m.centerSongs = append(m.centerSongs, centerSongRow{Title: "  Search failed", Artist: msg.err.Error()})
 			m.centerSelected = 0
 			m.centerTop = 0
 			l := m.layoutInfo()
 			m.ensureCenterViewport(centerVisibleItems(l.panelHeight))
+			m.ensureSearchDetailViewport(searchDetailVisibleItems(l.panelHeight))
+			m.focus = PanelCenter
 			return m, nil
 		}
 
 		m.searchActive = true
 		m.searchQuery = strings.TrimSpace(msg.query)
-		m.searchSections = []searchSection{{Title: "Songs (" + strconv.Itoa(len(msg.songs)) + ")", Expanded: true, Songs: append([]centerSongRow(nil), msg.songs...)}}
+		m.searchSections = append([]searchSection(nil), msg.sections...)
 		m.rebuildCenterFromSearch()
+		m.setSearchDetail("Detail", []string{"Select a result and press Enter"})
 		m.centerTitle = "Search · " + msg.query
 		m.centerSelected = 0
 		if len(m.centerSongs) > 1 {
@@ -110,7 +114,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.centerTop = 0
 		l := m.layoutInfo()
 		m.ensureCenterViewport(centerVisibleItems(l.panelHeight))
+		m.ensureSearchDetailViewport(searchDetailVisibleItems(l.panelHeight))
 		m.focus = PanelCenter
+		return m, nil
+
+	case searchDetailLoadedMsg:
+		if msg.err != nil {
+			m.setSearchDetail("Detail", []string{"Failed to load detail", msg.err.Error()})
+			l := m.layoutInfo()
+			m.ensureSearchDetailViewport(searchDetailVisibleItems(l.panelHeight))
+			return m, nil
+		}
+		m.setSearchDetail(msg.title, msg.lines)
+		l := m.layoutInfo()
+		m.ensureSearchDetailViewport(searchDetailVisibleItems(l.panelHeight))
+		m.focus = PanelCenterDetail
 		return m, nil
 
 	case playbackLoadedMsg:
@@ -356,12 +374,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				_ = savePersistedState(m.snapshotState())
 				return m, tea.Quit
 			case "ctrl+h", "ctrl+k":
-				if m.focus > PanelLeft {
-					m.focus--
+				switch m.focus {
+				case PanelRight:
+					if m.searchActive {
+						m.focus = PanelCenterDetail
+					} else {
+						m.focus = PanelCenter
+					}
+				case PanelCenterDetail:
+					m.focus = PanelCenter
+				case PanelCenter:
+					m.focus = PanelLeft
 				}
 			case "ctrl+l", "ctrl+j":
-				if m.focus < PanelRight {
-					m.focus++
+				switch m.focus {
+				case PanelLeft:
+					m.focus = PanelCenter
+				case PanelCenter:
+					if m.searchActive {
+						m.focus = PanelCenterDetail
+					} else {
+						m.focus = PanelRight
+					}
+				case PanelCenterDetail:
+					m.focus = PanelRight
 				}
 			case "j", "down":
 				if m.focus == PanelLeft {
@@ -370,6 +406,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else if m.focus == PanelCenter {
 					l := m.layoutInfo()
 					m.moveCenterSelection(1, centerVisibleItems(l.panelHeight))
+				} else if m.focus == PanelCenterDetail && m.searchActive {
+					l := m.layoutInfo()
+					m.moveSearchDetail(1, searchDetailVisibleItems(l.panelHeight))
 				} else if m.focus == PanelRight && m.rightPanelMode == RightPanelCover {
 					l := m.layoutInfo()
 					m.moveUpNextSelection(1, upNextVisibleItems(l.rightQueueHeight))
@@ -385,6 +424,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else if m.focus == PanelCenter {
 					l := m.layoutInfo()
 					m.moveCenterSelection(-1, centerVisibleItems(l.panelHeight))
+				} else if m.focus == PanelCenterDetail && m.searchActive {
+					l := m.layoutInfo()
+					m.moveSearchDetail(-1, searchDetailVisibleItems(l.panelHeight))
 				} else if m.focus == PanelRight && m.rightPanelMode == RightPanelCover {
 					l := m.layoutInfo()
 					m.moveUpNextSelection(-1, upNextVisibleItems(l.rightQueueHeight))
@@ -421,6 +463,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							l := m.layoutInfo()
 							m.toggleCenterSearchModuleAtSelection(centerVisibleItems(l.panelHeight))
 							return m, nil
+						}
+						row := m.centerSongs[m.centerSelected]
+						kind := strings.TrimSpace(row.Kind)
+						if kind != "" && kind != "songs" && kind != "library-songs" {
+							m.setSearchDetail("Loading...", []string{"Fetching " + kind + " details..."})
+							return m, fetchSearchDetailCmd(m.cider, kind, row.ID)
 						}
 					}
 					if id, ok := m.selectedCenterTrackID(); ok {
@@ -476,6 +524,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else if m.focus == PanelCenter {
 					m.centerSelected = 0
 					m.ensureCenterViewport(centerVisibleItems(l.panelHeight))
+				} else if m.focus == PanelCenterDetail && m.searchActive {
+					m.searchDetailTop = 0
+					m.ensureSearchDetailViewport(searchDetailVisibleItems(l.panelHeight))
 				} else if m.focus == PanelRight && m.rightPanelMode == RightPanelCover {
 					m.upNextSelected = 0
 					m.ensureUpNextViewport(upNextVisibleItems(l.rightQueueHeight))
@@ -497,6 +548,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.centerSelected = len(m.centerSongs) - 1
 						m.ensureCenterViewport(centerVisibleItems(l.panelHeight))
 					}
+				} else if m.focus == PanelCenterDetail && m.searchActive {
+					m.searchDetailTop = len(m.searchDetailLines)
+					m.ensureSearchDetailViewport(searchDetailVisibleItems(l.panelHeight))
 				} else if m.focus == PanelRight && m.rightPanelMode == RightPanelCover {
 					if len(m.upNext) > 0 {
 						m.upNextSelected = len(m.upNext) - 1

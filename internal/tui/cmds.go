@@ -231,29 +231,75 @@ func searchSongsCmd(client *cider.Client, query string) tea.Cmd {
 	q := strings.TrimSpace(query)
 	return func() tea.Msg {
 		if q == "" {
-			return searchSongsLoadedMsg{query: q, songs: nil}
+			return searchSongsLoadedMsg{query: q, sections: []searchSection{{Title: "Songs (0)", Expanded: true}, {Title: "Artists (0)", Expanded: true}, {Title: "Albums (0)", Expanded: true}, {Title: "Playlists (0)", Expanded: true}}}
 		}
 
-		tracks, err := client.SearchSongs(q, 25)
+		results, err := client.SearchAll(q, 25)
 		if err != nil {
 			return searchSongsLoadedMsg{query: q, err: err}
 		}
 
-		rows := make([]centerSongRow, 0, len(tracks))
-		for _, t := range tracks {
-			artist := strings.TrimSpace(t.Artist)
-			if artist == "" {
-				artist = strings.TrimSpace(t.Album)
+		buildRows := func(kind string, items []music.SearchResult) []centerSongRow {
+			rows := make([]centerSongRow, 0, len(items))
+			for _, it := range items {
+				artist := strings.TrimSpace(it.Artist)
+				if artist == "" {
+					artist = strings.TrimSpace(it.Album)
+				}
+				rows = append(rows, centerSongRow{
+					ID:       strings.TrimSpace(it.ID),
+					URL:      strings.TrimSpace(it.URL),
+					Title:    strings.TrimSpace(it.Title),
+					Artist:   artist,
+					Duration: formatTrackDuration(music.Track{DurationMS: it.DurationMS}),
+					Kind:     kind,
+				})
 			}
-			rows = append(rows, centerSongRow{
-				ID:       strings.TrimSpace(t.ID),
-				URL:      strings.TrimSpace(t.URL),
-				Title:    strings.TrimSpace(t.Title),
-				Artist:   artist,
-				Duration: formatTrackDuration(t),
-			})
+			return rows
 		}
-		return searchSongsLoadedMsg{query: q, songs: rows}
+
+		sections := []searchSection{
+			{Title: "Songs (" + strconv.Itoa(len(results["songs"])) + ")", Expanded: true, Songs: buildRows("songs", results["songs"])},
+			{Title: "Artists (" + strconv.Itoa(len(results["artists"])) + ")", Expanded: true, Songs: buildRows("artists", results["artists"])},
+			{Title: "Albums (" + strconv.Itoa(len(results["albums"])) + ")", Expanded: true, Songs: buildRows("albums", results["albums"])},
+			{Title: "Playlists (" + strconv.Itoa(len(results["playlists"])) + ")", Expanded: true, Songs: buildRows("playlists", results["playlists"])},
+		}
+		return searchSongsLoadedMsg{query: q, sections: sections}
+	}
+}
+
+func fetchSearchDetailCmd(client *cider.Client, kind, id string) tea.Cmd {
+	k := strings.TrimSpace(kind)
+	itemID := strings.TrimSpace(id)
+	return func() tea.Msg {
+		detail, err := client.SearchDetail(k, itemID)
+		if err != nil {
+			return searchDetailLoadedMsg{kind: k, id: itemID, err: err}
+		}
+
+		lines := make([]string, 0, 128)
+		if strings.TrimSpace(detail.Subtitle) != "" {
+			lines = append(lines, detail.Subtitle)
+			lines = append(lines, "")
+		}
+		if strings.TrimSpace(detail.Description) != "" {
+			lines = append(lines, detail.Description)
+			lines = append(lines, "")
+		}
+		if len(detail.Tracks) > 0 {
+			lines = append(lines, "Tracks")
+			for i, t := range detail.Tracks {
+				line := strconv.Itoa(i+1) + ". " + strings.TrimSpace(t.Title)
+				artist := strings.TrimSpace(t.Artist)
+				if artist != "" {
+					line += " — " + artist
+				}
+				lines = append(lines, line)
+			}
+		} else {
+			lines = append(lines, "No additional items available")
+		}
+		return searchDetailLoadedMsg{kind: k, id: itemID, title: strings.TrimSpace(detail.Title), lines: lines}
 	}
 }
 
