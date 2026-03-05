@@ -62,25 +62,6 @@ func (m Model) renderRightPanel(width, panelHeight, coverHeight, queueHeight int
 	coverBG := gruvBg
 	queueBG := gruvBg
 
-	if m.rightPanelMode == RightPanelLyrics {
-		lyrics := strings.TrimSpace(m.lyricsText)
-		if lyrics == "" {
-			lyrics = "lyrics loading..."
-		}
-		if m.lyricsErr != "" {
-			lyrics = "lyrics error\n\n" + m.lyricsErr
-		}
-
-		content := "Lyrics\n\n" + lyrics
-		return lipgloss.NewStyle().
-			Foreground(gruvFg).
-			Background(queueBG).
-			Width(width).
-			Height(panelHeight).
-			Align(lipgloss.Left, lipgloss.Top).
-			Render(content)
-	}
-
 	coverContent := ""
 	if coverHeight > 0 {
 		if m.coverErr != "" {
@@ -109,37 +90,97 @@ func (m Model) renderRightPanel(width, panelHeight, coverHeight, queueHeight int
 
 	queueContent := ""
 	if queueHeight > 0 {
-		visible := upNextVisibleItems(queueHeight)
-		lines := make([]string, 0, visible*2+2)
-		lines = append(lines, fitDisplayWidth("Up Next", width), "")
-
-		for i := 0; i < visible; i++ {
-			idx := m.upNextTop + i
-			if idx >= len(m.upNext) {
-				break
+		queueText := ""
+		if m.rightPanelMode == RightPanelLyrics {
+			bodyLines := m.lyricsBodyLines(width)
+			visible := lyricsVisibleItems(queueHeight)
+			top := m.lyricsTop
+			maxTop := len(bodyLines) - visible
+			if maxTop < 0 {
+				maxTop = 0
+			}
+			if top < 0 {
+				top = 0
+			}
+			if top > maxTop {
+				top = maxTop
 			}
 
-			item := m.upNext[idx]
-			line1 := fitDisplayWidth("• "+item.Title, width)
-			line2 := fitDisplayWidth("  "+item.Subtitle, width)
-
-			if idx == m.upNextSelected {
-				hl := lipgloss.NewStyle().
-					Foreground(gruvBg).
-					Background(gruvYellow).
-					Bold(true).
-					Width(width)
-				line1 = hl.Render(line1)
-				line2 = hl.Render(line2)
-			} else {
-				line1 = lipgloss.NewStyle().Foreground(gruvFg).Render(line1)
-				line2 = lipgloss.NewStyle().Foreground(gruvGray).Render(line2)
+			header := "Lyrics"
+			if maxTop > 0 {
+				header = fmt.Sprintf("Lyrics %d/%d", top+1, maxTop+1)
 			}
 
-			lines = append(lines, line1, line2)
+			lines := make([]string, 0, queueHeight)
+			lines = append(lines, fitDisplayWidth(header, width))
+			lines = append(lines, fitDisplayWidth("", width))
+
+			for i := top; i < len(bodyLines) && len(lines) < queueHeight; i++ {
+				lines = append(lines, fitDisplayWidth(bodyLines[i], width))
+			}
+			for len(lines) < queueHeight {
+				lines = append(lines, strings.Repeat(" ", width))
+			}
+			queueText = strings.Join(lines, "\n")
+		} else {
+			contextName := strings.TrimSpace(m.activePlaylistName)
+			if contextName == "" {
+				contextName = "N/A"
+			}
+			conn := "Disconnected"
+			if m.ciderConnected {
+				conn = "Connected"
+			}
+
+			nowIdx := 0
+			total := len(m.centerSongs)
+			if total > 0 {
+				for i, s := range m.centerSongs {
+					if strings.TrimSpace(s.ID) != "" && strings.TrimSpace(s.ID) == strings.TrimSpace(m.trackID) {
+						nowIdx = i + 1
+						break
+					}
+				}
+			}
+
+			nowLabel := "Now Playing: --/--"
+			if nowIdx > 0 && total > 0 {
+				nowLabel = fmt.Sprintf("Now Playing: #%d/%d", nowIdx, total)
+			}
+
+			upcoming := len(m.upNext)
+			upcomingLabel := fmt.Sprintf("Upcoming: %d tracks", upcoming)
+
+			raw := []string{
+				"",
+				"Cider: " + conn,
+				"Context: Playlist " + contextName,
+				nowLabel,
+				upcomingLabel,
+				"",
+				"Quick Actions",
+				"Enter: Play selected",
+				"Space: Play / Pause",
+				"n/p: Next / Previous",
+				"+/-: Volume up/down",
+				"s: Toggle Shuffle",
+				"e: Toggle Repeat",
+				"a: Toggle Autoplay",
+				"Ctrl+h/j/k/l: Focus",
+				"j/k: Navigate list",
+				"gg / G: Top / Bottom",
+				"Lyrics: j/k scroll",
+				"y: Toggle Queue/Lyrics",
+				"r: Refresh now playing",
+			}
+
+			lines := make([]string, 0, len(raw))
+			for _, line := range raw {
+				lines = append(lines, fitDisplayWidth(line, width))
+			}
+
+			queueText = strings.Join(lines, "\n")
 		}
-
-		queueText := strings.Join(lines, "\n")
 		queueContent = lipgloss.NewStyle().
 			Foreground(gruvFg).
 			Background(queueBG).
@@ -156,6 +197,72 @@ func (m Model) renderRightPanel(width, panelHeight, coverHeight, queueHeight int
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, coverContent, queueContent)
+}
+
+func (m Model) lyricsBodyLines(width int) []string {
+	lyrics := strings.TrimSpace(m.lyricsText)
+	if lyrics == "" {
+		lyrics = "lyrics loading..."
+	}
+	if m.lyricsErr != "" {
+		lyrics = "lyrics error\n\n" + m.lyricsErr
+	}
+
+	raw := strings.Split(lyrics, "\n")
+	lines := make([]string, 0, len(raw))
+	for _, line := range raw {
+		wrapped := wrapDisplayLine(strings.TrimRight(line, "\r"), width)
+		lines = append(lines, wrapped...)
+	}
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
+func wrapDisplayLine(s string, width int) []string {
+	if width <= 0 {
+		return []string{""}
+	}
+	if s == "" {
+		return []string{""}
+	}
+
+	out := make([]string, 0, 4)
+	var b strings.Builder
+	current := 0
+
+	flush := func() {
+		out = append(out, b.String())
+		b.Reset()
+		current = 0
+	}
+
+	for _, r := range s {
+		rw := runewidth.RuneWidth(r)
+		if rw < 0 {
+			rw = 0
+		}
+		if current+rw > width && b.Len() > 0 {
+			flush()
+		}
+		if rw > width {
+			if b.Len() > 0 {
+				flush()
+			}
+			out = append(out, string(r))
+			continue
+		}
+		b.WriteRune(r)
+		current += rw
+	}
+	if b.Len() > 0 {
+		flush()
+	}
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
 }
 
 func (m Model) renderNowPlaying(width int) string {
@@ -494,14 +601,34 @@ func (m Model) renderStatusBar(width int) string {
 	}
 
 	stateStr := lipgloss.NewStyle().Foreground(gruvBg).Background(gruvYellow).Bold(true).Render(" " + state + " ")
+	shuffleLabel := "shf off"
+	if m.shuffle {
+		shuffleLabel = "shf on"
+	}
+	repeatLabel := "rep off"
+	if m.repeat == 1 {
+		repeatLabel = "rep one"
+	} else if m.repeat == 2 {
+		repeatLabel = "rep all"
+	}
+	autoplayLabel := "auto ?"
+	if m.autoplayKnown {
+		autoplayLabel = "auto off"
+		if m.autoplay {
+			autoplayLabel = "auto on"
+		}
+	}
+	shuffleStr := lipgloss.NewStyle().Foreground(gruvBg).Background(gruvAqua).Bold(true).Render(" " + shuffleLabel + " ")
+	repeatStr := lipgloss.NewStyle().Foreground(gruvBg).Background(gruvOrange).Bold(true).Render(" " + repeatLabel + " ")
+	autoplayStr := lipgloss.NewStyle().Foreground(gruvBg).Background(gruvGreen).Bold(true).Render(" " + autoplayLabel + " ")
 	dimStr := lipgloss.NewStyle().Foreground(gruvBg).Background(gruvGray).Bold(true).Render(fmt.Sprintf(" %dx%d ", m.width, m.height))
 	volStr := lipgloss.NewStyle().Foreground(gruvBg).Background(gruvAqua).Bold(true).Render(fmt.Sprintf(" vol %d%% ", m.volume))
 	focusStr := lipgloss.NewStyle().Foreground(gruvBg).Background(gruvOrange).Bold(true).Render(" focus " + m.focusLabel() + " ")
 
-	gap := width - lipgloss.Width(stateStr) - lipgloss.Width(dimStr) - lipgloss.Width(volStr) - lipgloss.Width(focusStr)
+	gap := width - lipgloss.Width(stateStr) - lipgloss.Width(shuffleStr) - lipgloss.Width(repeatStr) - lipgloss.Width(autoplayStr) - lipgloss.Width(dimStr) - lipgloss.Width(volStr) - lipgloss.Width(focusStr)
 	if gap < 0 {
 		gap = 0
 	}
 
-	return stateStr + lipgloss.NewStyle().Background(gruvBg).Render(strings.Repeat(" ", gap)) + focusStr + dimStr + volStr
+	return stateStr + shuffleStr + repeatStr + autoplayStr + lipgloss.NewStyle().Background(gruvBg).Render(strings.Repeat(" ", gap)) + focusStr + dimStr + volStr
 }
