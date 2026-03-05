@@ -227,6 +227,36 @@ func fetchLyricsCmd(client *cider.Client, trackID, track, artist, album string) 
 	}
 }
 
+func searchSongsCmd(client *cider.Client, query string) tea.Cmd {
+	q := strings.TrimSpace(query)
+	return func() tea.Msg {
+		if q == "" {
+			return searchSongsLoadedMsg{query: q, songs: nil}
+		}
+
+		tracks, err := client.SearchSongs(q, 25)
+		if err != nil {
+			return searchSongsLoadedMsg{query: q, err: err}
+		}
+
+		rows := make([]centerSongRow, 0, len(tracks))
+		for _, t := range tracks {
+			artist := strings.TrimSpace(t.Artist)
+			if artist == "" {
+				artist = strings.TrimSpace(t.Album)
+			}
+			rows = append(rows, centerSongRow{
+				ID:       strings.TrimSpace(t.ID),
+				URL:      strings.TrimSpace(t.URL),
+				Title:    strings.TrimSpace(t.Title),
+				Artist:   artist,
+				Duration: formatTrackDuration(t),
+			})
+		}
+		return searchSongsLoadedMsg{query: q, songs: rows}
+	}
+}
+
 func playItemCmd(client *cider.Client, trackID string) tea.Cmd {
 	id := strings.TrimSpace(trackID)
 	return func() tea.Msg {

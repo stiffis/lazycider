@@ -84,3 +84,9 @@ type appStateLoadedMsg struct {
 	state persistedState
 	err   error
 }
+
+type searchSongsLoadedMsg struct {
+	query string
+	songs []centerSongRow
+	err   error
+}
