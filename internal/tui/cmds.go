@@ -88,6 +88,8 @@ func fetchPlaybackCmd(client *cider.Client) tea.Cmd {
 		if err != nil {
 			return playbackLoadedMsg{err: err}
 		}
+		autoplay, aErr := client.Autoplay()
+		isPlaying, pErr := client.IsPlaying()
 
 		totalSec := float64(np.DurationMS) / 1000.0
 		if totalSec <= 0 {
@@ -95,10 +97,16 @@ func fetchPlaybackCmd(client *cider.Client) tea.Cmd {
 		}
 		if totalSec <= 0 {
 			return playbackLoadedMsg{
-				trackID: strings.TrimSpace(np.TrackID),
-				track:   strings.TrimSpace(np.Track),
-				artist:  strings.TrimSpace(np.Artist),
-				album:   strings.TrimSpace(np.Album),
+				trackID:       strings.TrimSpace(np.TrackID),
+				track:         strings.TrimSpace(np.Track),
+				artist:        strings.TrimSpace(np.Artist),
+				album:         strings.TrimSpace(np.Album),
+				shuffleMode:   np.ShuffleMode,
+				repeatMode:    np.RepeatMode,
+				autoplay:      autoplay,
+				autoplayKnown: aErr == nil,
+				playing:       isPlaying,
+				playingKnown:  pErr == nil,
 			}
 		}
 
@@ -119,15 +127,30 @@ func fetchPlaybackCmd(client *cider.Client) tea.Cmd {
 		}
 
 		return playbackLoadedMsg{
-			trackID:  strings.TrimSpace(np.TrackID),
-			track:    strings.TrimSpace(np.Track),
-			artist:   strings.TrimSpace(np.Artist),
-			album:    strings.TrimSpace(np.Album),
-			current:  formatClock(currentSec),
-			total:    formatClock(totalSec),
-			progress: progress,
-			valid:    true,
+			trackID:       strings.TrimSpace(np.TrackID),
+			track:         strings.TrimSpace(np.Track),
+			artist:        strings.TrimSpace(np.Artist),
+			album:         strings.TrimSpace(np.Album),
+			shuffleMode:   np.ShuffleMode,
+			repeatMode:    np.RepeatMode,
+			autoplay:      autoplay,
+			autoplayKnown: aErr == nil,
+			playing:       isPlaying,
+			playingKnown:  pErr == nil,
+			currentSec:    currentSec,
+			totalSec:      totalSec,
+			current:       formatClock(currentSec),
+			total:         formatClock(totalSec),
+			progress:      progress,
+			valid:         true,
 		}
+	}
+}
+
+func playPauseCmd(client *cider.Client) tea.Cmd {
+	return func() tea.Msg {
+		err := client.PlayPause()
+		return playbackControlMsg{action: "playpause", err: err}
 	}
 }
 
@@ -187,15 +210,18 @@ func fetchPlaylistTracksCmd(client *cider.Client, name, playlistID string) tea.C
 	}
 }
 
-func fetchLyricsCmd(client *cider.Client, trackID, track, artist string) tea.Cmd {
+func fetchLyricsCmd(client *cider.Client, trackID, track, artist, album string) tea.Cmd {
 	return func() tea.Msg {
-		text, err := client.Lyrics(trackID)
+		text, source, err := client.Lyrics(trackID, track, artist, album)
 		if err != nil {
-			reason := fmt.Sprintf("lyrics endpoint unavailable (%v)", err)
+			reason := fmt.Sprintf("cider/lrclib/lyrics.ovh unavailable (%v)", err)
 			return lyricsLoadedMsg{text: fallbackLyrics(track, artist, reason)}
 		}
 		if strings.TrimSpace(text) == "" {
-			return lyricsLoadedMsg{text: fallbackLyrics(track, artist, "lyrics endpoint returned empty response")}
+			return lyricsLoadedMsg{text: fallbackLyrics(track, artist, "all lyrics providers returned empty response")}
+		}
+		if strings.TrimSpace(source) != "" {
+			text = "[Source: " + strings.TrimSpace(source) + "]\n\n" + text
 		}
 		return lyricsLoadedMsg{text: text}
 	}
@@ -212,34 +238,13 @@ func playItemCmd(client *cider.Client, trackID string) tea.Cmd {
 	}
 }
 
-func playTrackInContextCmd(client *cider.Client, trackID, playlistURL string, enqueueIDs []string) tea.Cmd {
+func playTrackCmd(client *cider.Client, trackID string) tea.Cmd {
 	id := strings.TrimSpace(trackID)
-	contextURL := strings.TrimSpace(playlistURL)
 	return func() tea.Msg {
 		if id == "" {
 			return playItemResultMsg{trackID: id, err: fmt.Errorf("missing track id")}
 		}
-		if contextURL != "" {
-			if u := cider.PlaylistTrackURL(contextURL, id); strings.TrimSpace(u) != "" {
-				if err := client.PlayURL(u); err == nil {
-					return playItemResultMsg{trackID: id}
-				}
-			}
-		}
-		if len(enqueueIDs) > 0 {
-			_ = client.ClearQueue()
-		}
 		err := client.PlayItem("songs", id)
-		if err == nil {
-			for _, qid := range enqueueIDs {
-				if strings.TrimSpace(qid) == "" || strings.TrimSpace(qid) == id {
-					continue
-				}
-				if qErr := client.PlayLater("songs", qid); qErr != nil {
-					break
-				}
-			}
-		}
 		return playItemResultMsg{trackID: id, err: err}
 	}
 }
@@ -256,15 +261,21 @@ func fetchQueueCmd(client *cider.Client, nowPlayingTrackID string) tea.Cmd {
 		}
 
 		start := 0
+		foundCurrent := false
 		if currentIdx >= 0 && currentIdx < len(tracks) {
 			start = currentIdx + 1
+			foundCurrent = true
 		} else if nowID != "" {
 			for i, t := range tracks {
 				if strings.TrimSpace(t.ID) == nowID {
 					start = i + 1
+					foundCurrent = true
 					break
 				}
 			}
+		}
+		if !foundCurrent {
+			return queueLoadedMsg{items: nil}
 		}
 		if start < 0 {
 			start = 0
@@ -288,6 +299,55 @@ func fetchQueueCmd(client *cider.Client, nowPlayingTrackID string) tea.Cmd {
 	}
 }
 
+func toggleShuffleCmd(client *cider.Client) tea.Cmd {
+	return func() tea.Msg {
+		err := client.ToggleShuffle()
+		return playbackControlMsg{action: "shuffle", err: err}
+	}
+}
+
+func toggleRepeatCmd(client *cider.Client) tea.Cmd {
+	return func() tea.Msg {
+		err := client.ToggleRepeat()
+		return playbackControlMsg{action: "repeat", err: err}
+	}
+}
+
+func toggleAutoplayCmd(client *cider.Client) tea.Cmd {
+	return func() tea.Msg {
+		err := client.ToggleAutoplay()
+		return playbackControlMsg{action: "autoplay", err: err}
+	}
+}
+
+func nextCmd(client *cider.Client) tea.Cmd {
+	return func() tea.Msg {
+		err := client.Next()
+		return playbackControlMsg{action: "next", err: err}
+	}
+}
+
+func previousCmd(client *cider.Client) tea.Cmd {
+	return func() tea.Msg {
+		err := client.Previous()
+		return playbackControlMsg{action: "previous", err: err}
+	}
+}
+
+func adjustVolumeCmd(client *cider.Client, current, delta int) tea.Cmd {
+	target := current + delta
+	if target < 0 {
+		target = 0
+	}
+	if target > 100 {
+		target = 100
+	}
+	return func() tea.Msg {
+		err := client.SetVolumePercent(target)
+		return playbackControlMsg{action: "volume", volume: target, setVolume: true, err: err}
+	}
+}
+
 func fallbackLyrics(track, artist, reason string) string {
 	title := strings.TrimSpace(track)
 	if title == "" {
@@ -302,10 +362,12 @@ func fallbackLyrics(track, artist, reason string) string {
 		title + " — " + by,
 		"",
 		"[Lyrics fallback]",
-		"API lyrics are not available right now.",
+		"No provider returned lyrics right now.",
 		"",
-		"This panel is ready for full synced lyrics",
-		"as soon as Cider returns non-empty data.",
+		"Provider order:",
+		"1) Cider local API",
+		"2) LRCLIB",
+		"3) lyrics.ovh",
 		"",
 		"Reason:",
 		reason,
@@ -320,10 +382,6 @@ func clearKittyImagesCmd() tea.Cmd {
 }
 
 func (m Model) drawCoverCmd(clear bool) tea.Cmd {
-	if m.rightPanelMode == RightPanelLyrics {
-		return nil
-	}
-
 	if m.coverPath == "" || m.coverW <= 0 || m.coverH <= 0 || m.width <= 0 || m.height <= 0 {
 		return nil
 	}
