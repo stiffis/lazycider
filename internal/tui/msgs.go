@@ -24,6 +24,10 @@ type coverDrawnMsg struct {
 type playbackTickMsg time.Time
 
 type playbackLoadedMsg struct {
+	trackID  string
+	track    string
+	artist   string
+	album    string
 	current  string
 	total    string
 	progress float64
@@ -41,6 +45,11 @@ type playlistTracksLoadedMsg struct {
 	name  string
 	songs []centerSongRow
 	err   error
+}
+
+type playItemResultMsg struct {
+	trackID string
+	err     error
 }
 
 type lyricsLoadedMsg struct {

@@ -28,14 +28,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(fetchPlaybackCmd(m.cider), playbackTickCmd())
 
 	case playbackLoadedMsg:
-		if msg.err == nil && msg.valid {
-			if msg.current != "" {
-				m.current = msg.current
+		if msg.err == nil {
+			m.trackID = strings.TrimSpace(msg.trackID)
+			if strings.TrimSpace(msg.track) != "" {
+				m.track = strings.TrimSpace(msg.track)
 			}
-			if msg.total != "" {
-				m.total = msg.total
+			if strings.TrimSpace(msg.artist) != "" {
+				m.artist = strings.TrimSpace(msg.artist)
 			}
-			m.progress = msg.progress
+			if strings.TrimSpace(msg.album) != "" {
+				m.album = strings.TrimSpace(msg.album)
+			}
+			if msg.valid {
+				if msg.current != "" {
+					m.current = msg.current
+				}
+				if msg.total != "" {
+					m.total = msg.total
+				}
+				m.progress = msg.progress
+			}
+		}
+		return m, nil
+
+	case playItemResultMsg:
+		if msg.err == nil && strings.TrimSpace(msg.trackID) != "" {
+			m.trackID = strings.TrimSpace(msg.trackID)
+			return m, tea.Batch(fetchPlaybackCmd(m.cider), fetchCoverCmd(m.cider))
 		}
 		return m, nil
 
@@ -194,6 +213,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					l := m.layoutInfo()
 					m.toggleLeftModuleAtSelection(leftVisibleItems(l.panelHeight))
+				} else if m.focus == PanelCenter {
+					if id, ok := m.selectedCenterTrackID(); ok {
+						return m, playItemCmd(m.cider, id)
+					}
 				}
 			case "l":
 				if m.focus == PanelLeft {

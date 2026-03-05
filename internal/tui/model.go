@@ -29,6 +29,7 @@ type leftRow struct {
 }
 
 type centerSongRow struct {
+	ID       string
 	Title    string
 	Artist   string
 	Duration string
@@ -427,6 +428,17 @@ func (m Model) selectedPlaylistName() (string, bool) {
 		return "", false
 	}
 	return name, true
+}
+
+func (m Model) selectedCenterTrackID() (string, bool) {
+	if len(m.centerSongs) == 0 || m.centerSelected < 0 || m.centerSelected >= len(m.centerSongs) {
+		return "", false
+	}
+	id := strings.TrimSpace(m.centerSongs[m.centerSelected].ID)
+	if id == "" {
+		return "", false
+	}
+	return id, true
 }
 
 func (m *Model) ensureUpNextViewport(visible int) {

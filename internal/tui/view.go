@@ -245,7 +245,18 @@ func (m Model) renderCenterPanel(width, height int) string {
 			dur = "--:--"
 		}
 		abs := m.centerTop + i
-		line := formatCenterColumns(strconv.Itoa(abs+1), s.Title, s.Artist, dur, width)
+		idx := strconv.Itoa(abs + 1)
+		playingRow := false
+		if strings.TrimSpace(s.ID) != "" && strings.TrimSpace(s.ID) == strings.TrimSpace(m.trackID) {
+			idx = "▶"
+			playingRow = true
+		}
+		line := formatCenterColumns(idx, s.Title, s.Artist, dur, width)
+		if playingRow {
+			markerCell := padLeftDisplay("▶", 3)
+			coloredCell := strings.Replace(markerCell, "▶", lipgloss.NewStyle().Foreground(gruvGreen).Bold(true).Render("▶"), 1)
+			line = strings.Replace(line, markerCell, coloredCell, 1)
+		}
 		if m.focus == PanelCenter && abs == m.centerSelected {
 			hl := lipgloss.NewStyle().
 				Foreground(gruvBg).

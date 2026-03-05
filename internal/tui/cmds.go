@@ -87,7 +87,12 @@ func fetchPlaybackCmd(client *cider.Client) tea.Cmd {
 			totalSec = np.CurrentSec + np.RemainingSec
 		}
 		if totalSec <= 0 {
-			return playbackLoadedMsg{}
+			return playbackLoadedMsg{
+				trackID: strings.TrimSpace(np.TrackID),
+				track:   strings.TrimSpace(np.Track),
+				artist:  strings.TrimSpace(np.Artist),
+				album:   strings.TrimSpace(np.Album),
+			}
 		}
 
 		currentSec := np.CurrentSec
@@ -107,6 +112,10 @@ func fetchPlaybackCmd(client *cider.Client) tea.Cmd {
 		}
 
 		return playbackLoadedMsg{
+			trackID:  strings.TrimSpace(np.TrackID),
+			track:    strings.TrimSpace(np.Track),
+			artist:   strings.TrimSpace(np.Artist),
+			album:    strings.TrimSpace(np.Album),
 			current:  formatClock(currentSec),
 			total:    formatClock(totalSec),
 			progress: progress,
@@ -152,6 +161,7 @@ func fetchPlaylistTracksCmd(client *cider.Client, name, playlistID string) tea.C
 				artist = strings.TrimSpace(t.Album)
 			}
 			songs = append(songs, centerSongRow{
+				ID:       strings.TrimSpace(t.ID),
 				Title:    t.Title,
 				Artist:   artist,
 				Duration: formatTrackDuration(t),
@@ -176,6 +186,17 @@ func fetchLyricsCmd(client *cider.Client, trackID, track, artist string) tea.Cmd
 			return lyricsLoadedMsg{text: fallbackLyrics(track, artist, "lyrics endpoint returned empty response")}
 		}
 		return lyricsLoadedMsg{text: text}
+	}
+}
+
+func playItemCmd(client *cider.Client, trackID string) tea.Cmd {
+	id := strings.TrimSpace(trackID)
+	return func() tea.Msg {
+		if id == "" {
+			return playItemResultMsg{trackID: id, err: fmt.Errorf("missing track id")}
+		}
+		err := client.PlayItem("songs", id)
+		return playItemResultMsg{trackID: id, err: err}
 	}
 }
 

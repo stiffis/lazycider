@@ -84,6 +84,22 @@ func (c *Client) QueueHeadWithArtwork() (music.NowPlaying, error) {
 	return music.NowPlaying{}, fmt.Errorf("queue missing usable artwork")
 }
 
+func (c *Client) PlayItem(itemType, id string) error {
+	t := strings.TrimSpace(itemType)
+	if t == "" {
+		t = "songs"
+	}
+	payload := map[string]string{
+		"type": t,
+		"id":   strings.TrimSpace(id),
+	}
+	if payload["id"] == "" {
+		return fmt.Errorf("missing item id")
+	}
+	_, _, err := c.doPOSTJSON("/api/v1/playback/play-item", payload)
+	return err
+}
+
 func extractArtworkURL(m map[string]any) string {
 	if v := extractMapString(m, "attributes", "artwork", "url"); v != "" {
 		return v

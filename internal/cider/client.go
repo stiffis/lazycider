@@ -66,6 +66,36 @@ func (c *Client) doGET(path string) ([]byte, int, error) {
 	return body, resp.StatusCode, nil
 }
 
+func (c *Client) doPOSTJSON(path string, payload any) ([]byte, int, error) {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return nil, 0, err
+	}
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+path, bytes.NewReader(b))
+	if err != nil {
+		return nil, 0, err
+	}
+	if c.token != "" {
+		req.Header.Set("apitoken", c.token)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	if resp.StatusCode >= 300 {
+		return body, resp.StatusCode, fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return body, resp.StatusCode, nil
+}
+
 func (c *Client) runV3(path string) (map[string]any, error) {
 	payload := map[string]string{"path": path}
 	b, err := json.Marshal(payload)
