@@ -24,15 +24,23 @@ type coverDrawnMsg struct {
 type playbackTickMsg time.Time
 
 type playbackLoadedMsg struct {
-	trackID  string
-	track    string
-	artist   string
-	album    string
-	current  string
-	total    string
-	progress float64
-	valid    bool
-	err      error
+	trackID       string
+	track         string
+	artist        string
+	album         string
+	shuffleMode   int
+	repeatMode    int
+	autoplay      bool
+	autoplayKnown bool
+	playing       bool
+	playingKnown  bool
+	currentSec    float64
+	totalSec      float64
+	current       string
+	total         string
+	progress      float64
+	valid         bool
+	err           error
 }
 
 type playlistsLoadedMsg struct {
@@ -60,7 +68,19 @@ type queueLoadedMsg struct {
 	err   error
 }
 
+type playbackControlMsg struct {
+	action    string
+	volume    int
+	setVolume bool
+	err       error
+}
+
 type lyricsLoadedMsg struct {
 	text string
 	err  error
+}
+
+type appStateLoadedMsg struct {
+	state persistedState
+	err   error
 }
