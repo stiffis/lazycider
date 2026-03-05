@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+const maxArtworkBytes = 20 * 1024 * 1024
+
 func Cache(raw string) (string, int, int, error) {
 	if strings.TrimSpace(raw) == "" {
 		return "", 0, 0, fmt.Errorf("empty artwork url")
@@ -26,6 +28,9 @@ func Cache(raw string) (string, int, int, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		return "", 0, 0, err
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", 0, 0, fmt.Errorf("unsupported artwork scheme")
 	}
 
 	ext := strings.ToLower(filepath.Ext(parsed.Path))
@@ -64,10 +69,16 @@ func Cache(raw string) (string, int, int, error) {
 		if err != nil {
 			return "", 0, 0, err
 		}
-		if _, err = io.Copy(f, resp.Body); err != nil {
+		written, err := io.Copy(f, io.LimitReader(resp.Body, maxArtworkBytes+1))
+		if err != nil {
 			f.Close()
 			_ = os.Remove(tmp)
 			return "", 0, 0, err
+		}
+		if written > maxArtworkBytes {
+			f.Close()
+			_ = os.Remove(tmp)
+			return "", 0, 0, fmt.Errorf("artwork too large")
 		}
 		if err = f.Close(); err != nil {
 			_ = os.Remove(tmp)
