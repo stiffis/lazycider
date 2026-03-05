@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"lazycider/internal/music"
@@ -17,6 +18,8 @@ type nowPlayingResponse struct {
 		DurationInMillis    int64   `json:"durationInMillis"`
 		CurrentPlaybackTime float64 `json:"currentPlaybackTime"`
 		RemainingTime       float64 `json:"remainingTime"`
+		ShuffleMode         int     `json:"shuffleMode"`
+		RepeatMode          int     `json:"repeatMode"`
 		Play                struct {
 			ID string `json:"id"`
 		} `json:"playParams"`
@@ -46,8 +49,25 @@ func (c *Client) NowPlaying() (music.NowPlaying, error) {
 		DurationMS:   resp.Info.DurationInMillis,
 		CurrentSec:   resp.Info.CurrentPlaybackTime,
 		RemainingSec: resp.Info.RemainingTime,
+		ShuffleMode:  resp.Info.ShuffleMode,
+		RepeatMode:   resp.Info.RepeatMode,
 	}
 	return np, nil
+}
+
+func (c *Client) Autoplay() (bool, error) {
+	body, _, err := c.doGET("/api/v1/playback/autoplay")
+	if err != nil {
+		return false, err
+	}
+	var obj struct {
+		Status string `json:"status"`
+		Value  bool   `json:"value"`
+	}
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return false, err
+	}
+	return obj.Value, nil
 }
 
 func (c *Client) QueueHeadWithArtwork() (music.NowPlaying, error) {
@@ -131,6 +151,67 @@ func (c *Client) ClearQueue() error {
 	return err
 }
 
+func (c *Client) ToggleShuffle() error {
+	_, _, err := c.doPOSTJSON("/api/v1/playback/toggle-shuffle", map[string]any{})
+	return err
+}
+
+func (c *Client) ToggleRepeat() error {
+	_, _, err := c.doPOSTJSON("/api/v1/playback/toggle-repeat", map[string]any{})
+	return err
+}
+
+func (c *Client) ToggleAutoplay() error {
+	_, _, err := c.doPOSTJSON("/api/v1/playback/toggle-autoplay", map[string]any{})
+	return err
+}
+
+func (c *Client) PlayPause() error {
+	_, _, err := c.doPOSTJSON("/api/v1/playback/playpause", map[string]any{})
+	return err
+}
+
+func (c *Client) IsPlaying() (bool, error) {
+	body, _, err := c.doGET("/api/v1/playback/is-playing")
+	if err != nil {
+		return false, err
+	}
+	var obj struct {
+		Status    string `json:"status"`
+		IsPlaying bool   `json:"is_playing"`
+	}
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return false, err
+	}
+	return obj.IsPlaying, nil
+}
+
+func (c *Client) Next() error {
+	_, _, err := c.doPOSTJSON("/api/v1/playback/next", map[string]any{})
+	return err
+}
+
+func (c *Client) Previous() error {
+	_, _, err := c.doPOSTJSON("/api/v1/playback/previous", map[string]any{})
+	return err
+}
+
+func (c *Client) SetVolumePercent(percent int) error {
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	vol := strconv.FormatFloat(float64(percent)/100.0, 'f', 2, 64)
+	_, _, err := c.doPOSTJSON("/api/v1/playback/volume", map[string]any{"volume": vol})
+	if err == nil {
+		return nil
+	}
+	_, _, err = c.doPOSTJSON("/api/v1/playback/volume", map[string]any{"volume": float64(percent) / 100.0})
+	return err
+}
+
 func (c *Client) QueueTracks() ([]music.Track, int, error) {
 	body, _, err := c.doGET("/api/v1/playback/queue")
 	if err != nil {
@@ -160,7 +241,12 @@ func (c *Client) QueueTracks() ([]music.Track, int, error) {
 
 		isCurrent := false
 		if st, ok := extractMapAny(item, "_state").(map[string]any); ok {
-			if v, ok := anyToInt64(st["current"]); ok && v > 0 {
+			if v, ok := anyToInt64(st["current"]); ok {
+				if v == 2 {
+					isCurrent = true
+				}
+			}
+			if s, ok := st["current"].(string); ok && strings.EqualFold(strings.TrimSpace(s), "current") {
 				isCurrent = true
 			}
 		}

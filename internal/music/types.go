@@ -9,6 +9,8 @@ type NowPlaying struct {
 	DurationMS   int64
 	CurrentSec   float64
 	RemainingSec float64
+	ShuffleMode  int
+	RepeatMode   int
 }
 
 type Playlist struct {
