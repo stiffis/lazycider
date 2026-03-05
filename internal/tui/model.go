@@ -66,31 +66,37 @@ type Model struct {
 	leftSelected int
 	leftTop      int
 
-	centerTitle    string
-	centerSongs    []centerSongRow
-	centerSelected int
-	centerTop      int
+	centerTitle           string
+	centerSongs           []centerSongRow
+	centerSelected        int
+	centerTop             int
+	restoreCenterSelected int
 
 	playlistIDByName   map[string]string
 	playlistURLByName  map[string]string
 	playlistCache      map[string][]centerSongRow
+	activePlaylistID   string
 	activePlaylistName string
 
-	track    string
-	artist   string
-	album    string
-	playing  bool
-	progress float64
-	current  string
-	total    string
-	volume   int
-	shuffle  bool
-	repeat   int
-	trackID  string
+	track          string
+	artist         string
+	album          string
+	playing        bool
+	progress       float64
+	current        string
+	total          string
+	volume         int
+	shuffle        bool
+	repeat         int
+	autoplay       bool
+	autoplayKnown  bool
+	trackID        string
+	ciderConnected bool
 
 	rightPanelMode RightPanelMode
 	lyricsText     string
 	lyricsErr      string
+	lyricsTop      int
 
 	upNext         []upNextRow
 	upNextSelected int
@@ -115,33 +121,38 @@ func NewModelWithClient(client *cider.Client) Model {
 		client = cider.NewFromEnv()
 	}
 	return Model{
-		state:             StateNormal,
-		focus:             PanelCenter,
-		leftModules:       seedLeftModules(),
-		leftSelected:      0,
-		leftTop:           0,
-		centerTitle:       "Center Content",
-		centerSongs:       []centerSongRow{{Title: "Select a playlist", Artist: "Left panel", Duration: ""}},
-		centerSelected:    0,
-		centerTop:         0,
-		playlistIDByName:  make(map[string]string),
-		playlistURLByName: make(map[string]string),
-		playlistCache:     make(map[string][]centerSongRow),
-		track:             "Sailing",
-		artist:            "Christopher Cross",
-		album:             "Christopher Cross",
-		playing:           true,
-		progress:          0.55,
-		current:           "2:34",
-		total:             "4:41",
-		volume:            80,
-		shuffle:           false,
-		repeat:            0,
-		rightPanelMode:    RightPanelCover,
-		upNext:            seedUpNext(),
-		upNextSelected:    0,
-		upNextTop:         0,
-		cider:             client,
+		state:                 StateNormal,
+		focus:                 PanelCenter,
+		leftModules:           seedLeftModules(),
+		leftSelected:          0,
+		leftTop:               0,
+		centerTitle:           "Center Content",
+		centerSongs:           []centerSongRow{{Title: "Select a playlist", Artist: "Left panel", Duration: ""}},
+		centerSelected:        0,
+		centerTop:             0,
+		restoreCenterSelected: -1,
+		playlistIDByName:      make(map[string]string),
+		playlistURLByName:     make(map[string]string),
+		playlistCache:         make(map[string][]centerSongRow),
+		track:                 "Sailing",
+		artist:                "Christopher Cross",
+		album:                 "Christopher Cross",
+		playing:               true,
+		progress:              0.55,
+		current:               "2:34",
+		total:                 "4:41",
+		volume:                80,
+		shuffle:               false,
+		repeat:                0,
+		autoplay:              false,
+		autoplayKnown:         false,
+		ciderConnected:        false,
+		rightPanelMode:        RightPanelCover,
+		lyricsTop:             0,
+		upNext:                nil,
+		upNextSelected:        0,
+		upNextTop:             0,
+		cider:                 client,
 	}
 }
 
@@ -445,6 +456,41 @@ func (m Model) selectedCenterTrackID() (string, bool) {
 	return id, true
 }
 
+func (m Model) adjacentCenterTrackID(delta int) (string, int, bool) {
+	if len(m.centerSongs) == 0 || delta == 0 {
+		return "", 0, false
+	}
+
+	base := -1
+	if strings.TrimSpace(m.trackID) != "" {
+		for i, s := range m.centerSongs {
+			if strings.TrimSpace(s.ID) != "" && strings.TrimSpace(s.ID) == strings.TrimSpace(m.trackID) {
+				base = i
+				break
+			}
+		}
+	}
+	if base < 0 {
+		base = m.centerSelected
+	}
+	if base < 0 || base >= len(m.centerSongs) {
+		return "", 0, false
+	}
+
+	step := 1
+	if delta < 0 {
+		step = -1
+	}
+	for i := base + step; i >= 0 && i < len(m.centerSongs); i += step {
+		id := strings.TrimSpace(m.centerSongs[i].ID)
+		if id != "" {
+			return id, i, true
+		}
+	}
+
+	return "", 0, false
+}
+
 func (m Model) centerTrackIDsAfterSelection() []string {
 	if len(m.centerSongs) == 0 || m.centerSelected < 0 || m.centerSelected >= len(m.centerSongs) {
 		return nil
@@ -500,6 +546,34 @@ func (m *Model) ensureUpNextViewport(visible int) {
 	}
 }
 
+func (m *Model) ensureLyricsViewport(visible, total int) {
+	if visible < 1 {
+		visible = 1
+	}
+	if total < 0 {
+		total = 0
+	}
+	maxTop := total - visible
+	if maxTop < 0 {
+		maxTop = 0
+	}
+	if m.lyricsTop < 0 {
+		m.lyricsTop = 0
+	}
+	if m.lyricsTop > maxTop {
+		m.lyricsTop = maxTop
+	}
+}
+
+func (m *Model) moveLyricsScroll(delta, visible, total int) {
+	if delta == 0 {
+		m.ensureLyricsViewport(visible, total)
+		return
+	}
+	m.lyricsTop += delta
+	m.ensureLyricsViewport(visible, total)
+}
+
 func upNextVisibleItems(queueHeight int) int {
 	v := (queueHeight - 2) / 2
 	if v < 1 {
@@ -508,32 +582,10 @@ func upNextVisibleItems(queueHeight int) int {
 	return v
 }
 
-func seedUpNext() []upNextRow {
-	return []upNextRow{
-		{Title: "You're My Heart, You're My Soul", Subtitle: "Modern Talking — 80s 100 Hits"},
-		{Title: "Listen To Your Heart", Subtitle: "Roxette — Look Sharp!"},
-		{Title: "All Out of Love", Subtitle: "Air Supply — 80s 100 Hits"},
-		{Title: "Una Lady Como Tu", Subtitle: "Manuel Turizo — Una Lady Como Tu"},
-		{Title: "Can't Fight This Feeling", Subtitle: "REO Speedwagon — 80s 100 Hits"},
-		{Title: "Escucha a tu Corazon", Subtitle: "Laura Pausini — Lo mejor"},
-		{Title: "Donde esta el amor", Subtitle: "Pablo Alboran — Baladas"},
-		{Title: "Hard to Say I'm Sorry", Subtitle: "Peter Cetera — Glory of Love"},
-		{Title: "Animals", Subtitle: "Maroon 5 — V (Deluxe)"},
-		{Title: "How Am I Supposed to Live", Subtitle: "Michael Bolton — 80s 100 Hits"},
-		{Title: "Lejos de Ti", Subtitle: "Pelo D'Ambrosio — Lejos de ti"},
-		{Title: "Caribbean Queen", Subtitle: "Billy Ocean — 80s 100 Hits"},
-		{Title: "Yo Quisiera", Subtitle: "Reik — Reik"},
-		{Title: "Run To You", Subtitle: "Bryan Adams — Reckless"},
-		{Title: "Take On Me", Subtitle: "a-ha — Hunting High and Low"},
-		{Title: "The Promise", Subtitle: "When In Rome — Greatest Hits"},
-		{Title: "Every Time You Go Away", Subtitle: "Paul Young — The Secret of Association"},
-		{Title: "Broken Wings", Subtitle: "Mr. Mister — Welcome to the Real World"},
-		{Title: "Drive", Subtitle: "The Cars — Heartbeat City"},
-		{Title: "Time After Time", Subtitle: "Cyndi Lauper — She's So Unusual"},
-		{Title: "True", Subtitle: "Spandau Ballet — True"},
-		{Title: "Against All Odds", Subtitle: "Phil Collins — Hits"},
-		{Title: "One Last Cry", Subtitle: "Brian McKnight — Brian McKnight"},
-		{Title: "Un-Break My Heart", Subtitle: "Toni Braxton — Secrets"},
-		{Title: "End of the Road", Subtitle: "Boyz II Men — Cooleyhighharmony"},
+func lyricsVisibleItems(queueHeight int) int {
+	v := queueHeight - 2
+	if v < 1 {
+		v = 1
 	}
+	return v
 }
