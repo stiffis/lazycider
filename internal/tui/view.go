@@ -70,7 +70,7 @@ func (m Model) renderRightPanel(width, panelHeight, coverHeight, queueHeight int
 				Background(coverBG).
 				Width(width).
 				Height(coverHeight).
-				Render("cover error\n" + m.coverErr)
+				Render("cover error\n" + sanitizeDisplay(m.coverErr))
 		} else if m.coverPath == "" {
 			coverContent = lipgloss.NewStyle().
 				Foreground(gruvGray).
@@ -211,7 +211,7 @@ func (m Model) lyricsBodyLines(width int) []string {
 	raw := strings.Split(lyrics, "\n")
 	lines := make([]string, 0, len(raw))
 	for _, line := range raw {
-		wrapped := wrapDisplayLine(strings.TrimRight(line, "\r"), width)
+		wrapped := wrapDisplayLine(sanitizeDisplay(strings.TrimRight(line, "\r")), width)
 		lines = append(lines, wrapped...)
 	}
 	if len(lines) == 0 {
@@ -275,12 +275,12 @@ func (m Model) renderNowPlaying(width int) string {
 		Foreground(gruvFg).
 		Background(bg).
 		Bold(true).
-		Render(m.track)
+		Render(sanitizeDisplay(m.track))
 
 	meta := lipgloss.NewStyle().
 		Foreground(gruvGray).
 		Background(bg).
-		Render(fmt.Sprintf("%s — %s", m.artist, m.album))
+		Render(fmt.Sprintf("%s — %s", sanitizeDisplay(m.artist), sanitizeDisplay(m.album)))
 
 	barWidth := (width * 2) / 5
 	filled := int(float64(barWidth) * m.progress)
@@ -522,7 +522,23 @@ func (m Model) renderLeftPanel(width, height int) string {
 }
 
 func fitDisplayWidth(s string, width int) string {
-	return padRightDisplay(truncateDisplay(s, width), width)
+	return padRightDisplay(truncateDisplay(sanitizeDisplay(s), width), width)
+}
+
+func sanitizeDisplay(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\t':
+			b.WriteRune(r)
+		case r < 0x20 || r == 0x7f || r == 0x1b:
+			continue
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func (m Model) renderFocusBar(l layoutInfo) string {
