@@ -2,6 +2,15 @@
 
 Terminal UI client for Cider (Apple Music) built with Go and Bubble Tea.
 
+[![Repository](https://img.shields.io/badge/repository-github-181717?logo=github)](https://github.com/stiffis/lazycider)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go)](https://go.dev/)
+[![Bubble Tea](https://img.shields.io/badge/Bubble%20Tea-TUI-ffb86c)](https://github.com/charmbracelet/bubbletea)
+[![Lip Gloss](https://img.shields.io/badge/Lip%20Gloss-styling-8be9fd)](https://github.com/charmbracelet/lipgloss)
+[![Kitty](https://img.shields.io/badge/Kitty-inline%20art-7aa2f7)](https://sw.kovidgoyal.net/kitty/)
+
+Repository: <https://github.com/stiffis/lazycider>
+
 ## Features
 
 - Three-pane layout (left navigation, center content, right now-playing/lyrics)
@@ -109,3 +118,8 @@ gofmt -w ./...
 go test ./...
 go build ./...
 ```
+
+## License
+
+This project is licensed under GNU GPL v3.0 or later (`GPL-3.0-or-later`).
+See `LICENSE` for details.
