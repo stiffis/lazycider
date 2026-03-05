@@ -27,3 +27,21 @@ type Track struct {
 	URL        string
 	DurationMS int64
 }
+
+type SearchResult struct {
+	ID         string
+	Type       string
+	Title      string
+	Artist     string
+	Album      string
+	URL        string
+	DurationMS int64
+}
+
+type SearchDetail struct {
+	Type        string
+	Title       string
+	Subtitle    string
+	Description string
+	Tracks      []Track
+}
