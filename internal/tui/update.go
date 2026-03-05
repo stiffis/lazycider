@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,6 +17,7 @@ func (m Model) Init() tea.Cmd {
 		fetchPlaylistsCmd(m.cider),
 		fetchQueueCmd(m.cider, m.trackID),
 		queueTickCmd(),
+		loadStateCmd(),
 	)
 }
 
@@ -25,6 +28,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		l := m.layoutInfo()
 		m.ensureUpNextViewport(upNextVisibleItems(l.rightQueueHeight))
+		lyricsLines := m.lyricsBodyLines(l.rightWidth)
+		m.ensureLyricsViewport(lyricsVisibleItems(l.rightQueueHeight), len(lyricsLines))
 		m.ensureLeftViewport(leftVisibleItems(l.panelHeight))
 		m.ensureCenterViewport(centerVisibleItems(l.panelHeight))
 		return m, m.drawCoverCmd(true)
@@ -38,8 +43,52 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case queueTickMsg:
 		return m, tea.Batch(fetchQueueCmd(m.cider, m.trackID), queueTickCmd())
 
+	case appStateLoadedMsg:
+		if msg.err != nil {
+			if os.IsNotExist(msg.err) {
+				return m, nil
+			}
+			return m, nil
+		}
+		m.activePlaylistID = strings.TrimSpace(msg.state.ActivePlaylistID)
+		m.activePlaylistName = strings.TrimSpace(msg.state.ActivePlaylistName)
+		if m.activePlaylistName != "" && strings.TrimSpace(msg.state.ActivePlaylistURL) != "" {
+			m.playlistURLByName[m.activePlaylistName] = strings.TrimSpace(msg.state.ActivePlaylistURL)
+		}
+		if strings.TrimSpace(msg.state.CurrentTrackID) != "" {
+			m.trackID = strings.TrimSpace(msg.state.CurrentTrackID)
+		}
+		if len(msg.state.ContextTrackIDs) > 0 {
+			restored := make([]centerSongRow, 0, len(msg.state.ContextTrackIDs))
+			for i, id := range msg.state.ContextTrackIDs {
+				id = strings.TrimSpace(id)
+				if id == "" {
+					continue
+				}
+				restored = append(restored, centerSongRow{ID: id, Title: "Track " + strconv.Itoa(i+1), Artist: "Restored context"})
+			}
+			if len(restored) > 0 {
+				m.centerSongs = restored
+				m.centerSelected = msg.state.CenterSelected
+				l := m.layoutInfo()
+				m.ensureCenterViewport(centerVisibleItems(l.panelHeight))
+			}
+		}
+		if m.activePlaylistName != "" {
+			m.centerTitle = "Playlist · " + m.activePlaylistName
+		}
+		if m.activePlaylistID != "" {
+			m.restoreCenterSelected = msg.state.CenterSelected
+			return m, fetchPlaylistTracksCmd(m.cider, m.activePlaylistName, m.activePlaylistID)
+		}
+		return m, nil
+
 	case playbackLoadedMsg:
+		prevPlaying := m.playing
+		prevTrackID := strings.TrimSpace(m.trackID)
+		prevProgress := m.progress
 		if msg.err == nil {
+			m.ciderConnected = true
 			m.trackID = strings.TrimSpace(msg.trackID)
 			if strings.TrimSpace(msg.track) != "" {
 				m.track = strings.TrimSpace(msg.track)
@@ -50,6 +99,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if strings.TrimSpace(msg.album) != "" {
 				m.album = strings.TrimSpace(msg.album)
 			}
+			m.shuffle = msg.shuffleMode != 0
+			m.repeat = msg.repeatMode
+			if msg.autoplayKnown {
+				m.autoplay = msg.autoplay
+				m.autoplayKnown = true
+			}
+			if msg.playingKnown {
+				m.playing = msg.playing
+			}
 			if msg.valid {
 				if msg.current != "" {
 					m.current = msg.current
@@ -59,28 +117,76 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.progress = msg.progress
 			}
+
+			trackChanged := strings.TrimSpace(msg.trackID) != "" && strings.TrimSpace(msg.trackID) != prevTrackID
+			if trackChanged && m.rightPanelMode == RightPanelLyrics {
+				m.lyricsText = ""
+				m.lyricsErr = ""
+				m.lyricsTop = 0
+				return m, fetchLyricsCmd(m.cider, m.trackID, m.track, m.artist, m.album)
+			}
+
+			ended := false
+			if msg.playingKnown && prevPlaying && !m.playing {
+				if strings.TrimSpace(msg.trackID) != "" && strings.TrimSpace(msg.trackID) == prevTrackID {
+					if msg.totalSec > 0 && msg.currentSec >= msg.totalSec-0.7 {
+						ended = true
+					} else if prevProgress >= 0.98 {
+						ended = true
+					}
+				}
+			}
+			if ended {
+				if id, idx, ok := m.adjacentCenterTrackID(1); ok {
+					m.centerSelected = idx
+					l := m.layoutInfo()
+					m.ensureCenterViewport(centerVisibleItems(l.panelHeight))
+					return m, playTrackCmd(m.cider, id)
+				}
+			}
+		} else {
+			m.ciderConnected = false
 		}
 		return m, nil
 
 	case playItemResultMsg:
 		if msg.err == nil && strings.TrimSpace(msg.trackID) != "" {
+			m.ciderConnected = true
 			m.trackID = strings.TrimSpace(msg.trackID)
-			return m, tea.Batch(fetchPlaybackCmd(m.cider), fetchCoverCmd(m.cider), fetchQueueCmd(m.cider, m.trackID))
+			return m, tea.Batch(fetchPlaybackCmd(m.cider), fetchCoverCmd(m.cider), fetchQueueCmd(m.cider, m.trackID), saveStateCmd(m.snapshotState()))
+		}
+		if msg.err != nil {
+			m.ciderConnected = false
 		}
 		return m, nil
 
 	case queueLoadedMsg:
 		if msg.err == nil {
+			m.ciderConnected = true
 			m.upNext = append([]upNextRow(nil), msg.items...)
 			m.upNextSelected = 0
 			m.upNextTop = 0
 			l := m.layoutInfo()
 			m.ensureUpNextViewport(upNextVisibleItems(l.rightQueueHeight))
+		} else {
+			m.ciderConnected = false
 		}
+		return m, nil
+
+	case playbackControlMsg:
+		if msg.err == nil {
+			m.ciderConnected = true
+			if msg.setVolume {
+				m.volume = msg.volume
+			}
+			return m, tea.Batch(fetchPlaybackCmd(m.cider), fetchQueueCmd(m.cider, m.trackID))
+		}
+		m.ciderConnected = false
 		return m, nil
 
 	case playlistsLoadedMsg:
 		if msg.err == nil {
+			m.ciderConnected = true
 			for i := range m.leftModules {
 				if m.leftModules[i].Name == "Playlists" {
 					m.leftModules[i].Items = append([]string(nil), msg.names...)
@@ -95,13 +201,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			l := m.layoutInfo()
 			m.ensureLeftViewport(leftVisibleItems(l.panelHeight))
+			if m.activePlaylistName != "" && m.activePlaylistID == "" {
+				m.activePlaylistID = strings.TrimSpace(m.playlistIDByName[m.activePlaylistName])
+			}
+			return m, saveStateCmd(m.snapshotState())
+		} else {
+			m.ciderConnected = false
 		}
 		return m, nil
 
 	case playlistTracksLoadedMsg:
 		if msg.err != nil {
+			m.ciderConnected = false
 			m.centerSongs = []centerSongRow{{Title: "No tracks found", Artist: msg.name, Duration: ""}}
 		} else {
+			m.ciderConnected = true
 			m.centerSongs = append([]centerSongRow(nil), msg.songs...)
 			m.playlistCache[msg.name] = append([]centerSongRow(nil), msg.songs...)
 		}
@@ -109,15 +223,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.centerTop = 0
 		l := m.layoutInfo()
 		m.ensureCenterViewport(centerVisibleItems(l.panelHeight))
-		return m, fetchQueueCmd(m.cider, m.trackID)
+		if m.restoreCenterSelected >= 0 && len(m.centerSongs) > 0 {
+			if m.restoreCenterSelected >= len(m.centerSongs) {
+				m.centerSelected = len(m.centerSongs) - 1
+			} else {
+				m.centerSelected = m.restoreCenterSelected
+			}
+			m.restoreCenterSelected = -1
+			m.ensureCenterViewport(centerVisibleItems(l.panelHeight))
+		}
+		return m, tea.Batch(fetchQueueCmd(m.cider, m.trackID), saveStateCmd(m.snapshotState()))
 
 	case coverLoadedMsg:
 		if msg.err != nil {
+			m.ciderConnected = false
 			if m.coverPath == "" {
 				m.coverErr = msg.err.Error()
 			}
 			return m, nil
 		}
+		m.ciderConnected = true
 
 		trackChanged := msg.trackID != "" && msg.trackID != m.trackID
 
@@ -139,6 +264,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.trackID != "" {
 			m.trackID = msg.trackID
 		}
+		if trackChanged {
+			m.lyricsTop = 0
+		}
 		m.coverErr = ""
 
 		l := m.layoutInfo()
@@ -148,11 +276,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastCoverKey = ""
 		}
 
-		if m.rightPanelMode == RightPanelLyrics {
-			if trackChanged || m.lyricsText == "" {
-				return m, fetchLyricsCmd(m.cider, m.trackID, m.track, m.artist)
-			}
-			return m, nil
+		if m.rightPanelMode == RightPanelLyrics && (trackChanged || m.lyricsText == "") {
+			return m, tea.Batch(m.drawCoverCmd(false), fetchLyricsCmd(m.cider, m.trackID, m.track, m.artist, m.album))
 		}
 
 		return m, m.drawCoverCmd(false)
@@ -160,10 +285,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case lyricsLoadedMsg:
 		if msg.err != nil {
 			m.lyricsErr = msg.err.Error()
+			m.lyricsTop = 0
 			return m, nil
 		}
 		m.lyricsText = msg.text
 		m.lyricsErr = ""
+		m.lyricsTop = 0
+		l := m.layoutInfo()
+		lyricsLines := m.lyricsBodyLines(l.rightWidth)
+		m.ensureLyricsViewport(lyricsVisibleItems(l.rightQueueHeight), len(lyricsLines))
 		return m, nil
 
 	case coverDrawnMsg:
@@ -187,6 +317,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = StateCommand
 				m.cmdInput = ":"
 			case "ctrl+c":
+				_ = savePersistedState(m.snapshotState())
 				return m, tea.Quit
 			case "ctrl+h", "ctrl+k":
 				if m.focus > PanelLeft {
@@ -206,6 +337,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else if m.focus == PanelRight && m.rightPanelMode == RightPanelCover {
 					l := m.layoutInfo()
 					m.moveUpNextSelection(1, upNextVisibleItems(l.rightQueueHeight))
+				} else if m.focus == PanelRight && m.rightPanelMode == RightPanelLyrics {
+					l := m.layoutInfo()
+					lyricsLines := m.lyricsBodyLines(l.rightWidth)
+					m.moveLyricsScroll(1, lyricsVisibleItems(l.rightQueueHeight), len(lyricsLines))
 				}
 			case "k", "up":
 				if m.focus == PanelLeft {
@@ -217,10 +352,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else if m.focus == PanelRight && m.rightPanelMode == RightPanelCover {
 					l := m.layoutInfo()
 					m.moveUpNextSelection(-1, upNextVisibleItems(l.rightQueueHeight))
+				} else if m.focus == PanelRight && m.rightPanelMode == RightPanelLyrics {
+					l := m.layoutInfo()
+					lyricsLines := m.lyricsBodyLines(l.rightWidth)
+					m.moveLyricsScroll(-1, lyricsVisibleItems(l.rightQueueHeight), len(lyricsLines))
 				}
 			case "enter":
 				if m.focus == PanelLeft {
 					if name, ok := m.selectedPlaylistName(); ok {
+						m.activePlaylistID = strings.TrimSpace(m.playlistIDByName[name])
 						m.activePlaylistName = name
 						m.focus = PanelCenter
 						m.centerTitle = "Playlist · " + name
@@ -231,7 +371,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.centerSongs = append([]centerSongRow(nil), cached...)
 							l := m.layoutInfo()
 							m.ensureCenterViewport(centerVisibleItems(l.panelHeight))
-							return m, nil
+							return m, saveStateCmd(m.snapshotState())
 						}
 						id := strings.TrimSpace(m.playlistIDByName[name])
 						return m, fetchPlaylistTracksCmd(m.cider, name, id)
@@ -240,14 +380,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.toggleLeftModuleAtSelection(leftVisibleItems(l.panelHeight))
 				} else if m.focus == PanelCenter {
 					if id, ok := m.selectedCenterTrackID(); ok {
-						ctxURL := strings.TrimSpace(m.playlistURLByName[m.activePlaylistName])
-						enqueue := m.centerTrackIDsAfterSelection()
-						return m, playTrackInContextCmd(m.cider, id, ctxURL, enqueue)
+						return m, playTrackCmd(m.cider, id)
 					}
 				}
 			case "l":
 				if m.focus == PanelLeft {
 					if name, ok := m.selectedPlaylistName(); ok {
+						m.activePlaylistID = strings.TrimSpace(m.playlistIDByName[name])
 						m.activePlaylistName = name
 						m.focus = PanelCenter
 						m.centerTitle = "Playlist · " + name
@@ -258,7 +397,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.centerSongs = append([]centerSongRow(nil), cached...)
 							l := m.layoutInfo()
 							m.ensureCenterViewport(centerVisibleItems(l.panelHeight))
-							return m, nil
+							return m, saveStateCmd(m.snapshotState())
 						}
 						id := strings.TrimSpace(m.playlistIDByName[name])
 						return m, fetchPlaylistTracksCmd(m.cider, name, id)
@@ -287,6 +426,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else if m.focus == PanelRight && m.rightPanelMode == RightPanelCover {
 					m.upNextSelected = 0
 					m.ensureUpNextViewport(upNextVisibleItems(l.rightQueueHeight))
+				} else if m.focus == PanelRight && m.rightPanelMode == RightPanelLyrics {
+					m.lyricsTop = 0
+					lyricsLines := m.lyricsBodyLines(l.rightWidth)
+					m.ensureLyricsViewport(lyricsVisibleItems(l.rightQueueHeight), len(lyricsLines))
 				}
 			case "G":
 				l := m.layoutInfo()
@@ -306,25 +449,59 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.upNextSelected = len(m.upNext) - 1
 						m.ensureUpNextViewport(upNextVisibleItems(l.rightQueueHeight))
 					}
+				} else if m.focus == PanelRight && m.rightPanelMode == RightPanelLyrics {
+					lyricsLines := m.lyricsBodyLines(l.rightWidth)
+					m.ensureLyricsViewport(lyricsVisibleItems(l.rightQueueHeight), len(lyricsLines))
+					m.lyricsTop = len(lyricsLines)
+					m.ensureLyricsViewport(lyricsVisibleItems(l.rightQueueHeight), len(lyricsLines))
 				}
 			case "r":
 				if m.rightPanelMode == RightPanelLyrics {
-					return m, tea.Batch(fetchCoverCmd(m.cider), fetchLyricsCmd(m.cider, m.trackID, m.track, m.artist))
+					return m, tea.Batch(fetchCoverCmd(m.cider), fetchLyricsCmd(m.cider, m.trackID, m.track, m.artist, m.album), fetchQueueCmd(m.cider, m.trackID))
 				}
-				return m, fetchCoverCmd(m.cider)
+				return m, tea.Batch(fetchCoverCmd(m.cider), fetchQueueCmd(m.cider, m.trackID))
+			case "n":
+				if id, idx, ok := m.adjacentCenterTrackID(1); ok {
+					m.centerSelected = idx
+					l := m.layoutInfo()
+					m.ensureCenterViewport(centerVisibleItems(l.panelHeight))
+					return m, playTrackCmd(m.cider, id)
+				}
+				return m, nextCmd(m.cider)
+			case "p":
+				if id, idx, ok := m.adjacentCenterTrackID(-1); ok {
+					m.centerSelected = idx
+					l := m.layoutInfo()
+					m.ensureCenterViewport(centerVisibleItems(l.panelHeight))
+					return m, playTrackCmd(m.cider, id)
+				}
+				return m, previousCmd(m.cider)
+			case " ":
+				return m, playPauseCmd(m.cider)
+			case "+", "=":
+				return m, adjustVolumeCmd(m.cider, m.volume, 5)
+			case "-", "_":
+				return m, adjustVolumeCmd(m.cider, m.volume, -5)
+			case "s":
+				return m, toggleShuffleCmd(m.cider)
+			case "e":
+				return m, toggleRepeatCmd(m.cider)
+			case "a":
+				return m, toggleAutoplayCmd(m.cider)
 			case "y":
 				if m.rightPanelMode == RightPanelLyrics {
 					m.rightPanelMode = RightPanelCover
 					m.lyricsErr = ""
 					l := m.layoutInfo()
 					m.ensureUpNextViewport(upNextVisibleItems(l.rightQueueHeight))
-					return m, m.drawCoverCmd(true)
+					return m, nil
 				}
 
 				m.rightPanelMode = RightPanelLyrics
 				m.lyricsText = ""
 				m.lyricsErr = ""
-				return m, tea.Batch(clearKittyImagesCmd(), fetchLyricsCmd(m.cider, m.trackID, m.track, m.artist))
+				m.lyricsTop = 0
+				return m, fetchLyricsCmd(m.cider, m.trackID, m.track, m.artist, m.album)
 			}
 		case StateCommand:
 			switch msg.String() {
