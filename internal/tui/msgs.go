@@ -38,6 +38,7 @@ type playbackLoadedMsg struct {
 type playlistsLoadedMsg struct {
 	names []string
 	ids   map[string]string
+	urls  map[string]string
 	err   error
 }
 
@@ -50,6 +51,13 @@ type playlistTracksLoadedMsg struct {
 type playItemResultMsg struct {
 	trackID string
 	err     error
+}
+
+type queueTickMsg time.Time
+
+type queueLoadedMsg struct {
+	items []upNextRow
+	err   error
 }
 
 type lyricsLoadedMsg struct {

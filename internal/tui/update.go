@@ -7,7 +7,15 @@ import (
 )
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(fetchCoverCmd(m.cider), coverTickCmd(), fetchPlaybackCmd(m.cider), playbackTickCmd(), fetchPlaylistsCmd(m.cider))
+	return tea.Batch(
+		fetchCoverCmd(m.cider),
+		coverTickCmd(),
+		fetchPlaybackCmd(m.cider),
+		playbackTickCmd(),
+		fetchPlaylistsCmd(m.cider),
+		fetchQueueCmd(m.cider, m.trackID),
+		queueTickCmd(),
+	)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -26,6 +34,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case playbackTickMsg:
 		return m, tea.Batch(fetchPlaybackCmd(m.cider), playbackTickCmd())
+
+	case queueTickMsg:
+		return m, tea.Batch(fetchQueueCmd(m.cider, m.trackID), queueTickCmd())
 
 	case playbackLoadedMsg:
 		if msg.err == nil {
@@ -54,7 +65,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case playItemResultMsg:
 		if msg.err == nil && strings.TrimSpace(msg.trackID) != "" {
 			m.trackID = strings.TrimSpace(msg.trackID)
-			return m, tea.Batch(fetchPlaybackCmd(m.cider), fetchCoverCmd(m.cider))
+			return m, tea.Batch(fetchPlaybackCmd(m.cider), fetchCoverCmd(m.cider), fetchQueueCmd(m.cider, m.trackID))
+		}
+		return m, nil
+
+	case queueLoadedMsg:
+		if msg.err == nil {
+			m.upNext = append([]upNextRow(nil), msg.items...)
+			m.upNextSelected = 0
+			m.upNextTop = 0
+			l := m.layoutInfo()
+			m.ensureUpNextViewport(upNextVisibleItems(l.rightQueueHeight))
 		}
 		return m, nil
 
@@ -68,6 +89,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			for name, id := range msg.ids {
 				m.playlistIDByName[name] = id
+			}
+			for name, u := range msg.urls {
+				m.playlistURLByName[name] = u
 			}
 			l := m.layoutInfo()
 			m.ensureLeftViewport(leftVisibleItems(l.panelHeight))
@@ -85,7 +109,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.centerTop = 0
 		l := m.layoutInfo()
 		m.ensureCenterViewport(centerVisibleItems(l.panelHeight))
-		return m, nil
+		return m, fetchQueueCmd(m.cider, m.trackID)
 
 	case coverLoadedMsg:
 		if msg.err != nil {
@@ -197,6 +221,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				if m.focus == PanelLeft {
 					if name, ok := m.selectedPlaylistName(); ok {
+						m.activePlaylistName = name
 						m.focus = PanelCenter
 						m.centerTitle = "Playlist · " + name
 						m.centerSongs = []centerSongRow{{Title: "Loading playlist...", Artist: name, Duration: ""}}
@@ -215,12 +240,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.toggleLeftModuleAtSelection(leftVisibleItems(l.panelHeight))
 				} else if m.focus == PanelCenter {
 					if id, ok := m.selectedCenterTrackID(); ok {
-						return m, playItemCmd(m.cider, id)
+						ctxURL := strings.TrimSpace(m.playlistURLByName[m.activePlaylistName])
+						enqueue := m.centerTrackIDsAfterSelection()
+						return m, playTrackInContextCmd(m.cider, id, ctxURL, enqueue)
 					}
 				}
 			case "l":
 				if m.focus == PanelLeft {
 					if name, ok := m.selectedPlaylistName(); ok {
+						m.activePlaylistName = name
 						m.focus = PanelCenter
 						m.centerTitle = "Playlist · " + name
 						m.centerSongs = []centerSongRow{{Title: "Loading playlist...", Artist: name, Duration: ""}}

@@ -14,6 +14,7 @@ type NowPlaying struct {
 type Playlist struct {
 	ID   string
 	Name string
+	URL  string
 }
 
 type Track struct {
@@ -21,5 +22,6 @@ type Track struct {
 	Title      string
 	Artist     string
 	Album      string
+	URL        string
 	DurationMS int64
 }

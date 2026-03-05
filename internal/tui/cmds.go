@@ -16,6 +16,7 @@ import (
 const (
 	coverPollInterval    = 6 * time.Second
 	playbackPollInterval = 1 * time.Second
+	queuePollInterval    = 3 * time.Second
 )
 
 func coverTickCmd() tea.Cmd {
@@ -27,6 +28,12 @@ func coverTickCmd() tea.Cmd {
 func playbackTickCmd() tea.Cmd {
 	return tea.Tick(playbackPollInterval, func(t time.Time) tea.Msg {
 		return playbackTickMsg(t)
+	})
+}
+
+func queueTickCmd() tea.Cmd {
+	return tea.Tick(queuePollInterval, func(t time.Time) tea.Msg {
+		return queueTickMsg(t)
 	})
 }
 
@@ -132,13 +139,17 @@ func fetchPlaylistsCmd(client *cider.Client) tea.Cmd {
 		}
 		names := make([]string, 0, len(playlists))
 		ids := make(map[string]string, len(playlists))
+		urls := make(map[string]string, len(playlists))
 		for _, p := range playlists {
 			names = append(names, p.Name)
 			if strings.TrimSpace(p.ID) != "" {
 				ids[p.Name] = p.ID
 			}
+			if strings.TrimSpace(p.URL) != "" {
+				urls[p.Name] = p.URL
+			}
 		}
-		return playlistsLoadedMsg{names: names, ids: ids}
+		return playlistsLoadedMsg{names: names, ids: ids, urls: urls}
 	}
 }
 
@@ -162,6 +173,7 @@ func fetchPlaylistTracksCmd(client *cider.Client, name, playlistID string) tea.C
 			}
 			songs = append(songs, centerSongRow{
 				ID:       strings.TrimSpace(t.ID),
+				URL:      strings.TrimSpace(t.URL),
 				Title:    t.Title,
 				Artist:   artist,
 				Duration: formatTrackDuration(t),
@@ -197,6 +209,82 @@ func playItemCmd(client *cider.Client, trackID string) tea.Cmd {
 		}
 		err := client.PlayItem("songs", id)
 		return playItemResultMsg{trackID: id, err: err}
+	}
+}
+
+func playTrackInContextCmd(client *cider.Client, trackID, playlistURL string, enqueueIDs []string) tea.Cmd {
+	id := strings.TrimSpace(trackID)
+	contextURL := strings.TrimSpace(playlistURL)
+	return func() tea.Msg {
+		if id == "" {
+			return playItemResultMsg{trackID: id, err: fmt.Errorf("missing track id")}
+		}
+		if contextURL != "" {
+			if u := cider.PlaylistTrackURL(contextURL, id); strings.TrimSpace(u) != "" {
+				if err := client.PlayURL(u); err == nil {
+					return playItemResultMsg{trackID: id}
+				}
+			}
+		}
+		if len(enqueueIDs) > 0 {
+			_ = client.ClearQueue()
+		}
+		err := client.PlayItem("songs", id)
+		if err == nil {
+			for _, qid := range enqueueIDs {
+				if strings.TrimSpace(qid) == "" || strings.TrimSpace(qid) == id {
+					continue
+				}
+				if qErr := client.PlayLater("songs", qid); qErr != nil {
+					break
+				}
+			}
+		}
+		return playItemResultMsg{trackID: id, err: err}
+	}
+}
+
+func fetchQueueCmd(client *cider.Client, nowPlayingTrackID string) tea.Cmd {
+	nowID := strings.TrimSpace(nowPlayingTrackID)
+	return func() tea.Msg {
+		tracks, currentIdx, err := client.QueueTracks()
+		if err != nil {
+			return queueLoadedMsg{err: err}
+		}
+		if len(tracks) == 0 {
+			return queueLoadedMsg{items: nil}
+		}
+
+		start := 0
+		if currentIdx >= 0 && currentIdx < len(tracks) {
+			start = currentIdx + 1
+		} else if nowID != "" {
+			for i, t := range tracks {
+				if strings.TrimSpace(t.ID) == nowID {
+					start = i + 1
+					break
+				}
+			}
+		}
+		if start < 0 {
+			start = 0
+		}
+		if start > len(tracks) {
+			start = len(tracks)
+		}
+
+		rows := make([]upNextRow, 0, len(tracks)-start)
+		for _, t := range tracks[start:] {
+			sub := strings.TrimSpace(t.Artist)
+			if sub == "" {
+				sub = strings.TrimSpace(t.Album)
+			}
+			if sub == "" {
+				sub = "Unknown artist"
+			}
+			rows = append(rows, upNextRow{Title: t.Title, Subtitle: sub})
+		}
+		return queueLoadedMsg{items: rows}
 	}
 }
 

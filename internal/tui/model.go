@@ -30,6 +30,7 @@ type leftRow struct {
 
 type centerSongRow struct {
 	ID       string
+	URL      string
 	Title    string
 	Artist   string
 	Duration string
@@ -70,8 +71,10 @@ type Model struct {
 	centerSelected int
 	centerTop      int
 
-	playlistIDByName map[string]string
-	playlistCache    map[string][]centerSongRow
+	playlistIDByName   map[string]string
+	playlistURLByName  map[string]string
+	playlistCache      map[string][]centerSongRow
+	activePlaylistName string
 
 	track    string
 	artist   string
@@ -112,32 +115,33 @@ func NewModelWithClient(client *cider.Client) Model {
 		client = cider.NewFromEnv()
 	}
 	return Model{
-		state:            StateNormal,
-		focus:            PanelCenter,
-		leftModules:      seedLeftModules(),
-		leftSelected:     0,
-		leftTop:          0,
-		centerTitle:      "Center Content",
-		centerSongs:      []centerSongRow{{Title: "Select a playlist", Artist: "Left panel", Duration: ""}},
-		centerSelected:   0,
-		centerTop:        0,
-		playlistIDByName: make(map[string]string),
-		playlistCache:    make(map[string][]centerSongRow),
-		track:            "Sailing",
-		artist:           "Christopher Cross",
-		album:            "Christopher Cross",
-		playing:          true,
-		progress:         0.55,
-		current:          "2:34",
-		total:            "4:41",
-		volume:           80,
-		shuffle:          false,
-		repeat:           0,
-		rightPanelMode:   RightPanelCover,
-		upNext:           seedUpNext(),
-		upNextSelected:   0,
-		upNextTop:        0,
-		cider:            client,
+		state:             StateNormal,
+		focus:             PanelCenter,
+		leftModules:       seedLeftModules(),
+		leftSelected:      0,
+		leftTop:           0,
+		centerTitle:       "Center Content",
+		centerSongs:       []centerSongRow{{Title: "Select a playlist", Artist: "Left panel", Duration: ""}},
+		centerSelected:    0,
+		centerTop:         0,
+		playlistIDByName:  make(map[string]string),
+		playlistURLByName: make(map[string]string),
+		playlistCache:     make(map[string][]centerSongRow),
+		track:             "Sailing",
+		artist:            "Christopher Cross",
+		album:             "Christopher Cross",
+		playing:           true,
+		progress:          0.55,
+		current:           "2:34",
+		total:             "4:41",
+		volume:            80,
+		shuffle:           false,
+		repeat:            0,
+		rightPanelMode:    RightPanelCover,
+		upNext:            seedUpNext(),
+		upNextSelected:    0,
+		upNextTop:         0,
+		cider:             client,
 	}
 }
 
@@ -439,6 +443,20 @@ func (m Model) selectedCenterTrackID() (string, bool) {
 		return "", false
 	}
 	return id, true
+}
+
+func (m Model) centerTrackIDsAfterSelection() []string {
+	if len(m.centerSongs) == 0 || m.centerSelected < 0 || m.centerSelected >= len(m.centerSongs) {
+		return nil
+	}
+	out := make([]string, 0, len(m.centerSongs)-m.centerSelected-1)
+	for i := m.centerSelected + 1; i < len(m.centerSongs); i++ {
+		id := strings.TrimSpace(m.centerSongs[i].ID)
+		if id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func (m *Model) ensureUpNextViewport(visible int) {

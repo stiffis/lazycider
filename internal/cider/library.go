@@ -20,10 +20,11 @@ func (c *Client) ListLibraryPlaylists() ([]music.Playlist, error) {
 		for _, it := range items {
 			name := strings.TrimSpace(extractMapString(it, "attributes", "name"))
 			id := strings.TrimSpace(extractMapString(it, "id"))
+			url := strings.TrimSpace(extractMapString(it, "attributes", "url"))
 			if name == "" {
 				continue
 			}
-			out = append(out, music.Playlist{ID: id, Name: name})
+			out = append(out, music.Playlist{ID: id, Name: name, URL: url})
 		}
 		if strings.TrimSpace(next) == "" {
 			break
@@ -59,6 +60,7 @@ func (c *Client) ListPlaylistTracks(playlistID string) ([]music.Track, error) {
 			}
 			artist := strings.TrimSpace(extractMapString(it, "attributes", "artistName"))
 			album := strings.TrimSpace(extractMapString(it, "attributes", "albumName"))
+			url := strings.TrimSpace(extractMapString(it, "attributes", "url"))
 			dur, _ := anyToInt64(extractMapAny(it, "attributes", "durationInMillis"))
 			trackID := strings.TrimSpace(extractMapString(it, "id"))
 			tracks = append(tracks, music.Track{
@@ -66,6 +68,7 @@ func (c *Client) ListPlaylistTracks(playlistID string) ([]music.Track, error) {
 				Title:      title,
 				Artist:     artist,
 				Album:      album,
+				URL:        url,
 				DurationMS: dur,
 			})
 		}
