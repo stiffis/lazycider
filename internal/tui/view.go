@@ -159,6 +159,8 @@ func (m Model) renderRightPanel(width, panelHeight, coverHeight, queueHeight int
 				upcomingLabel,
 				"",
 				"Quick Actions",
+				"Ctrl+s: Search songs",
+				"Center search: h/l fold",
 				"Enter: Play selected",
 				"Space: Play / Pause",
 				"n/p: Next / Previous",
@@ -347,12 +349,17 @@ func (m Model) renderCenterPanel(width, height int) string {
 
 	for i := 0; i < len(visibleSongs); i++ {
 		s := visibleSongs[i]
+		isModuleRow := s.IsModule
 		dur := strings.TrimSpace(s.Duration)
 		if dur == "" {
 			dur = "--:--"
 		}
 		abs := m.centerTop + i
 		idx := strconv.Itoa(abs + 1)
+		if isModuleRow {
+			idx = ""
+			dur = ""
+		}
 		playingRow := false
 		if strings.TrimSpace(s.ID) != "" && strings.TrimSpace(s.ID) == strings.TrimSpace(m.trackID) {
 			idx = "▶"
@@ -372,7 +379,11 @@ func (m Model) renderCenterPanel(width, height int) string {
 				Width(width)
 			line = hl.Render(line)
 		} else {
-			line = lipgloss.NewStyle().Foreground(gruvGray).Render(line)
+			if isModuleRow {
+				line = lipgloss.NewStyle().Foreground(gruvFg).Bold(true).Render(line)
+			} else {
+				line = lipgloss.NewStyle().Foreground(gruvGray).Render(line)
+			}
 		}
 		innerLines = append(innerLines, line)
 	}
@@ -427,6 +438,19 @@ func (m Model) renderLeftPanel(width, height int) string {
 
 	leftText := "Search..."
 	rightIcon := ""
+	searchBG := gruvSearchBg
+	searchFG := gruvFg
+	if m.state == StateSearch {
+		q := strings.TrimSpace(sanitizeDisplay(m.cmdInput))
+		if q == "" {
+			leftText = "Search songs..."
+		} else {
+			leftText = q + "▏"
+		}
+		rightIcon = "↵"
+		searchBG = gruvYellow
+		searchFG = gruvBg
+	}
 	barWidth := width - 4
 	minWidth := lipgloss.Width(leftText) + lipgloss.Width(rightIcon) + 3
 	if barWidth < minWidth {
@@ -443,8 +467,8 @@ func (m Model) renderLeftPanel(width, height int) string {
 	searchLabel := " " + leftText + strings.Repeat(" ", gap) + rightIcon + " "
 
 	searchBar := lipgloss.NewStyle().
-		Foreground(gruvFg).
-		Background(gruvSearchBg).
+		Foreground(searchFG).
+		Background(searchBG).
 		Bold(true).
 		Width(barWidth).
 		Align(lipgloss.Left).
@@ -609,6 +633,10 @@ func padLeftDisplay(s string, width int) string {
 func (m Model) renderStatusBar(width int) string {
 	if m.state == StateCommand {
 		return lipgloss.NewStyle().Foreground(gruvFg).Background(gruvBg).Width(width).Render(m.cmdInput)
+	}
+	if m.state == StateSearch {
+		prompt := "search> " + m.cmdInput
+		return lipgloss.NewStyle().Foreground(gruvFg).Background(gruvBg).Width(width).Render(prompt)
 	}
 
 	state := "⏸ paused"

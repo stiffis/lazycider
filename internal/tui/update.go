@@ -83,6 +83,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case searchSongsLoadedMsg:
+		if msg.err != nil {
+			m.searchActive = true
+			m.searchQuery = strings.TrimSpace(msg.query)
+			m.searchSections = []searchSection{{Title: "Songs (0)", Expanded: true, Songs: nil}}
+			m.rebuildCenterFromSearch()
+			m.centerTitle = "Search · " + msg.query
+			m.centerSongs = append(m.centerSongs, centerSongRow{Title: "  Search failed", Artist: msg.err.Error()})
+			m.centerSelected = 0
+			m.centerTop = 0
+			l := m.layoutInfo()
+			m.ensureCenterViewport(centerVisibleItems(l.panelHeight))
+			return m, nil
+		}
+
+		m.searchActive = true
+		m.searchQuery = strings.TrimSpace(msg.query)
+		m.searchSections = []searchSection{{Title: "Songs (" + strconv.Itoa(len(msg.songs)) + ")", Expanded: true, Songs: append([]centerSongRow(nil), msg.songs...)}}
+		m.rebuildCenterFromSearch()
+		m.centerTitle = "Search · " + msg.query
+		m.centerSelected = 0
+		if len(m.centerSongs) > 1 {
+			m.centerSelected = 1
+		}
+		m.centerTop = 0
+		l := m.layoutInfo()
+		m.ensureCenterViewport(centerVisibleItems(l.panelHeight))
+		m.focus = PanelCenter
+		return m, nil
+
 	case playbackLoadedMsg:
 		prevPlaying := m.playing
 		prevTrackID := strings.TrimSpace(m.trackID)
@@ -211,6 +241,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case playlistTracksLoadedMsg:
+		m.clearSearchContext()
 		if msg.err != nil {
 			m.ciderConnected = false
 			m.centerSongs = []centerSongRow{{Title: "No tracks found", Artist: msg.name, Duration: ""}}
@@ -316,6 +347,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case ":":
 				m.state = StateCommand
 				m.cmdInput = ":"
+			case "ctrl+s":
+				m.searchPrevFocus = m.focus
+				m.state = StateSearch
+				m.cmdInput = ""
+				m.focus = PanelLeft
 			case "ctrl+c":
 				_ = savePersistedState(m.snapshotState())
 				return m, tea.Quit
@@ -360,6 +396,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				if m.focus == PanelLeft {
 					if name, ok := m.selectedPlaylistName(); ok {
+						m.clearSearchContext()
 						m.activePlaylistID = strings.TrimSpace(m.playlistIDByName[name])
 						m.activePlaylistName = name
 						m.focus = PanelCenter
@@ -379,6 +416,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					l := m.layoutInfo()
 					m.toggleLeftModuleAtSelection(leftVisibleItems(l.panelHeight))
 				} else if m.focus == PanelCenter {
+					if m.searchActive && len(m.centerSongs) > 0 && m.centerSelected >= 0 && m.centerSelected < len(m.centerSongs) {
+						if m.centerSongs[m.centerSelected].IsModule {
+							l := m.layoutInfo()
+							m.toggleCenterSearchModuleAtSelection(centerVisibleItems(l.panelHeight))
+							return m, nil
+						}
+					}
 					if id, ok := m.selectedCenterTrackID(); ok {
 						return m, playTrackCmd(m.cider, id)
 					}
@@ -386,6 +430,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "l":
 				if m.focus == PanelLeft {
 					if name, ok := m.selectedPlaylistName(); ok {
+						m.clearSearchContext()
 						m.activePlaylistID = strings.TrimSpace(m.playlistIDByName[name])
 						m.activePlaylistName = name
 						m.focus = PanelCenter
@@ -405,10 +450,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					l := m.layoutInfo()
 					m.expandLeftModuleAtSelection(leftVisibleItems(l.panelHeight))
 				}
+				if m.focus == PanelCenter && m.searchActive {
+					l := m.layoutInfo()
+					m.setCenterSearchModuleExpandedAtSelection(true, centerVisibleItems(l.panelHeight))
+				}
 			case "h":
 				if m.focus == PanelLeft {
 					l := m.layoutInfo()
 					m.collapseLeftModuleAtSelection(leftVisibleItems(l.panelHeight))
+				}
+				if m.focus == PanelCenter && m.searchActive {
+					l := m.layoutInfo()
+					m.setCenterSearchModuleExpandedAtSelection(false, centerVisibleItems(l.panelHeight))
 				}
 			case "g":
 				if !m.pendingG {
@@ -515,6 +568,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc":
 				m.state = StateNormal
 				m.cmdInput = ""
+			case "backspace":
+				if len(m.cmdInput) > 0 {
+					r := []rune(m.cmdInput)
+					m.cmdInput = string(r[:len(r)-1])
+				}
+			default:
+				if runes := []rune(msg.String()); len(runes) == 1 {
+					m.cmdInput += msg.String()
+				}
+			}
+		case StateSearch:
+			switch msg.String() {
+			case "enter":
+				q := strings.TrimSpace(m.cmdInput)
+				m.state = StateNormal
+				m.cmdInput = ""
+				m.focus = m.searchPrevFocus
+				return m, searchSongsCmd(m.cider, q)
+			case "esc":
+				m.state = StateNormal
+				m.cmdInput = ""
+				m.focus = m.searchPrevFocus
 			case "backspace":
 				if len(m.cmdInput) > 0 {
 					r := []rune(m.cmdInput)

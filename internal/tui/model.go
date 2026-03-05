@@ -34,6 +34,15 @@ type centerSongRow struct {
 	Title    string
 	Artist   string
 	Duration string
+	IsModule bool
+	Section  int
+	Item     int
+}
+
+type searchSection struct {
+	Title    string
+	Expanded bool
+	Songs    []centerSongRow
 }
 
 const (
@@ -71,6 +80,10 @@ type Model struct {
 	centerSelected        int
 	centerTop             int
 	restoreCenterSelected int
+	searchActive          bool
+	searchQuery           string
+	searchSections        []searchSection
+	searchPrevFocus       PanelFocus
 
 	playlistIDByName   map[string]string
 	playlistURLByName  map[string]string
@@ -131,6 +144,10 @@ func NewModelWithClient(client *cider.Client) Model {
 		centerSelected:        0,
 		centerTop:             0,
 		restoreCenterSelected: -1,
+		searchActive:          false,
+		searchQuery:           "",
+		searchSections:        nil,
+		searchPrevFocus:       PanelCenter,
 		playlistIDByName:      make(map[string]string),
 		playlistURLByName:     make(map[string]string),
 		playlistCache:         make(map[string][]centerSongRow),
@@ -503,6 +520,95 @@ func (m Model) centerTrackIDsAfterSelection() []string {
 		}
 	}
 	return out
+}
+
+func (m *Model) clearSearchContext() {
+	m.searchActive = false
+	m.searchQuery = ""
+	m.searchSections = nil
+}
+
+func (m *Model) rebuildCenterFromSearch() {
+	rows := make([]centerSongRow, 0, 64)
+	for si, sec := range m.searchSections {
+		rows = append(rows, centerSongRow{Title: sec.Title, IsModule: true, Section: si, Item: -1})
+		if !sec.Expanded {
+			continue
+		}
+		if len(sec.Songs) == 0 {
+			rows = append(rows, centerSongRow{Title: "  No matches", Artist: "Try another query", Section: si, Item: -1})
+			continue
+		}
+		for i, s := range sec.Songs {
+			row := s
+			row.Title = "  " + strings.TrimSpace(row.Title)
+			row.IsModule = false
+			row.Section = si
+			row.Item = i
+			rows = append(rows, row)
+		}
+	}
+	if len(rows) == 0 {
+		rows = []centerSongRow{{Title: "Songs (0)", IsModule: true, Section: 0, Item: -1}}
+	}
+	m.centerSongs = rows
+}
+
+func (m Model) selectedCenterSection() (int, bool) {
+	if len(m.centerSongs) == 0 || m.centerSelected < 0 || m.centerSelected >= len(m.centerSongs) {
+		return 0, false
+	}
+	r := m.centerSongs[m.centerSelected]
+	if r.Section < 0 || r.Section >= len(m.searchSections) {
+		return 0, false
+	}
+	return r.Section, true
+}
+
+func (m *Model) toggleCenterSearchModuleAtSelection(visible int) {
+	if !m.searchActive {
+		return
+	}
+	sectionIdx, ok := m.selectedCenterSection()
+	if !ok {
+		return
+	}
+	m.searchSections[sectionIdx].Expanded = !m.searchSections[sectionIdx].Expanded
+	m.rebuildCenterFromSearch()
+	for i := range m.centerSongs {
+		if m.centerSongs[i].IsModule && m.centerSongs[i].Section == sectionIdx {
+			m.centerSelected = i
+			break
+		}
+	}
+	m.ensureCenterViewport(visible)
+}
+
+func (m *Model) setCenterSearchModuleExpandedAtSelection(expanded bool, visible int) {
+	if !m.searchActive {
+		return
+	}
+	sectionIdx, ok := m.selectedCenterSection()
+	if !ok {
+		return
+	}
+	m.searchSections[sectionIdx].Expanded = expanded
+	m.rebuildCenterFromSearch()
+	for i := range m.centerSongs {
+		if m.centerSongs[i].IsModule && m.centerSongs[i].Section == sectionIdx {
+			if expanded && m.centerSelected < len(m.centerSongs)-1 {
+				if i+1 < len(m.centerSongs) && !m.centerSongs[i+1].IsModule && m.centerSongs[i+1].Section == sectionIdx {
+					m.centerSelected = i + 1
+				} else {
+					m.centerSelected = i
+				}
+			} else {
+				m.centerSelected = i
+			}
+			break
+		}
+	}
+	m.ensureCenterViewport(visible)
 }
 
 func (m *Model) ensureUpNextViewport(visible int) {
