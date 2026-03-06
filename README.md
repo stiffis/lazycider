@@ -9,6 +9,14 @@ Terminal UI client for Cider (Apple Music) built with Go and Bubble Tea.
 [![Lip Gloss](https://img.shields.io/badge/Lip%20Gloss-styling-8be9fd)](https://github.com/charmbracelet/lipgloss)
 [![Kitty](https://img.shields.io/badge/Kitty-inline%20art-7aa2f7)](https://sw.kovidgoyal.net/kitty/)
 
+## Screenshots
+
+![Main view](assets/main.png)
+Main view
+
+![Lyrics](assets/lyrics.png)
+Lyrics function with _rick-roll_
+
 ## Features
 
 - Three-pane layout (left navigation, center content, right now-playing/lyrics)
