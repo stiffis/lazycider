@@ -70,4 +70,4 @@ fi
 
 echo "-----------------------------------"
 echo -e "${GREEN}Installation completed successfully.${NC}"
-echo "Run: ${BLUE}${BIN_NAME}${NC}"
+echo "Run: ${BIN_NAME}"
