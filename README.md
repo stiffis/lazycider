@@ -14,7 +14,8 @@ Terminal UI client for Cider (Apple Music) built with Go and Bubble Tea.
 ![Main view](assets/main.png)
 Main view
 
-![Lyrics](assets/lyrics.png) \\
+![Lyrics](assets/lyrics.png)
+
 Lyrics function with _rick-roll_
 
 ## Features
